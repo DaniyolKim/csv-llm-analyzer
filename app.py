@@ -109,7 +109,7 @@ else:
                     max_retries = st.slider("최대 재시도 횟수", min_value=1, max_value=5, value=3)
             
             # Ollama 분석 실행 버튼
-            st.write("요청 사항을 입력하세요(ex:광고글 여부 알려줘)")
+            st.write("요청 사항을 입력하세요(ex:입력 된 text의 광고글 여부 알려줘. 광고면 O 아니면 X라고 표시만 해줘. 설명은 필요없어.)")
             prompt_input = st.text_area("", height=150, placeholder="여기에 요청 사항을 자세히 입력하세요...")
             if prompt_input and st.button("분석 요청"):
                 # 진행 상태 표시 컴포넌트 생성
