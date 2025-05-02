@@ -18,7 +18,7 @@ CSV 파일을 업로드하고 Ollama를 사용하여 로컬 LLM으로 데이터�
 
    ```
    git clone https://github.com/DaniyolKim/csv-llm-analyzer.git
-   cd csv-data-analyzer
+   cd csv-llm-analyzer
    ```
 
 2. 가상 환경 생성 및 활성화:
