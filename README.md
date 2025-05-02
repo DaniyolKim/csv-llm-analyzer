@@ -17,7 +17,7 @@ CSV 파일을 업로드하고 Ollama를 사용하여 로컬 LLM으로 데이터�
 1. 저장소 클론:
 
    ```
-   git clone https://github.com/yourusername/csv-data-analyzer.git
+   git clone https://github.com/DaniyolKim/csv-llm-analyzer.git
    cd csv-data-analyzer
    ```
 
