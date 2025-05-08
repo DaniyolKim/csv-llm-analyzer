@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+chromadb
+langchain-text-splitters
+requests
+ollama
