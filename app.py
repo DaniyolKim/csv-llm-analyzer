@@ -375,14 +375,14 @@ if st.session_state.rag_enabled:
             placeholder="실제 질문을 입력하세요. 예: '이 데이터에서 가장 중요한 정보는 무엇인가요?'"
         )
         
-        # 참조할 문서 수 설정 (최소 10, 최대 999)
+        # 참조할 문서 수 설정 (최소 3, 최대 20)
         n_results = st.slider(
                 "참조할 문서 수", 
-                min_value=10, 
-                max_value=999, 
-                value=10, 
-                step=10,
-                help="참조할 문서 수를 선택하세요. 최소 10개에서 최대 999개까지 설정할 수 있습니다."
+                min_value=3, 
+                max_value=20, 
+                value=5, 
+                step=1,
+                help="참조할 문서 수를 선택하세요. 일반적으로 3-5개가 적당합니다."
             )
         
         # Ollama로 질의하기

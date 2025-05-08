@@ -241,7 +241,7 @@ def query_chroma(collection, query_text, n_results=5):
     Args:
         collection (chromadb.Collection): ChromaDB 컬렉션
         query_text (str): 쿼리 텍스트
-        n_results (int): 반환할 결과 수
+        n_results (int): 반환할 결과 수 (기본값: 5)
         
     Returns:
         dict: 쿼리 결과
@@ -451,7 +451,7 @@ def get_ollama_install_guide():
         ```
         """
 
-def rag_query_with_ollama(collection, query, model_name="llama2", n_results=10):
+def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5):
     """
     RAG 시스템에 질의합니다.
     
@@ -459,7 +459,7 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=10):
         collection (chromadb.Collection): ChromaDB 컬렉션
         query (str): 질의 텍스트 (프롬프트와 질문이 결합된 형태일 수 있음)
         model_name (str): Ollama 모델 이름
-        n_results (int): 검색할 결과 수, 0이면 최대 999개 문서 사용, 최소 10개 문서 사용
+        n_results (int): 검색할 결과 수, 0이면 최대 20개 문서 사용, 최소 3개 문서 사용
         
     Returns:
         dict: 질의 결과
@@ -467,21 +467,21 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=10):
     # 쿼리 텍스트 정제
     cleaned_query = clean_text(query)
     
-    # n_results가 0이면 최대 999개 문서로 제한 (SQLite 변수 제한 고려)
+    # n_results가 0이면 최대 20개 문서로 제한
     if n_results == 0:
-        n_results = 999  # SQLite 변수 제한을 고려한 최대값
+        n_results = 20  # 일반적인 최대값
     
-    # n_results가 None이면 기본값 10 사용
+    # n_results가 None이면 기본값 5 사용
     elif n_results is None:
-        n_results = 10
+        n_results = 5
         
-    # n_results가 10보다 작으면 최소 10으로 설정
-    elif n_results < 10:
-        n_results = 10
+    # n_results가 3보다 작으면 최소 3으로 설정
+    elif n_results < 3:
+        n_results = 3
         
-    # n_results가 999보다 크면 최대 999로 제한
-    elif n_results > 999:
-        n_results = 999
+    # n_results가 20보다 크면 최대 20으로 제한
+    elif n_results > 20:
+        n_results = 20
     
     # ChromaDB에서 관련 문서 검색
     results = collection.query(
