@@ -401,37 +401,71 @@ if st.session_state.rag_enabled:
             if not combined_query.strip():
                 st.warning("프롬프트 또는 질문을 입력하세요.")
             else:
-                with st.spinner(f"Ollama({selected_model})로 질의 중..."):
-                    try:
-                        # n_results가 0이면 제한 없음(모든 문서 사용)
-                        actual_n_results = n_results
-                        
-                        # 디버깅용 - 실제 전송되는 쿼리 표시
-                        with st.expander("전송되는 쿼리 확인"):
-                            st.code(combined_query)
-                        
-                        result = rag_query_with_ollama(
-                            st.session_state.chroma_collection,
-                            combined_query,
-                            selected_model,
-                            actual_n_results
-                        )
-                        
-                        st.subheader("Ollama 응답")
-                        st.markdown(result["response"])
-                        
-                        st.subheader("참조 문서")
-                        for i, (doc, metadata, distance) in enumerate(zip(
-                            result["context"],
-                            result["metadatas"],
-                            result["distances"]
-                        )):
-                            st.markdown(f"**문서 {i+1}** (유사도: {1-distance:.4f})")
-                            st.info(doc)
-                            st.write(f"메타데이터: {metadata}")
-                            st.markdown("---")
-                    except Exception as e:
-                        st.error(f"Ollama 질의 중 오류 발생: {e}")
+                # 진행 상황 표시를 위한 컴포넌트
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                status_text.text("ChromaDB에서 관련 문서를 검색 중...")
+                
+                try:
+                    # 디버깅용 - 실제 전송되는 쿼리 표시
+                    with st.expander("전송되는 쿼리 확인"):
+                        st.code(combined_query)
+                    
+                    # 1단계: ChromaDB 검색 준비 (10%)
+                    progress_bar.progress(10)
+                    import time
+                    time.sleep(0.5)  # 진행 상황을 시각적으로 보여주기 위한 지연
+                    
+                    # 2단계: ChromaDB 검색 시작 (30%)
+                    progress_bar.progress(30)
+                    status_text.text("ChromaDB에서 관련 문서 검색 중...")
+                    
+                    # 쿼리 텍스트 정제 및 ChromaDB 검색 준비
+                    from utils import clean_text
+                    cleaned_query = clean_text(combined_query)
+                    
+                    # n_results 처리
+                    actual_n_results = n_results
+                    
+                    # 3단계: ChromaDB 검색 실행 (50%)
+                    progress_bar.progress(50)
+                    
+                    # 4단계: Ollama 모델에 질의 시작 (70%)
+                    progress_bar.progress(70)
+                    status_text.text(f"Ollama({selected_model})에 질의하여 응답 생성 중...")
+                    
+                    # RAG 쿼리 실행
+                    result = rag_query_with_ollama(
+                        st.session_state.chroma_collection,
+                        combined_query,
+                        selected_model,
+                        actual_n_results
+                    )
+                    
+                    # 5단계: 응답 생성 완료 (100%)
+                    progress_bar.progress(100)
+                    status_text.text("응답 생성 완료!")
+                    time.sleep(0.5)  # 완료 메시지를 잠시 표시
+                    status_text.empty()  # 상태 텍스트 지우기
+                    
+                    # 결과 표시
+                    st.subheader("Ollama 응답")
+                    st.markdown(result["response"])
+                    
+                    st.subheader("참조 문서")
+                    for i, (doc, metadata, distance) in enumerate(zip(
+                        result["context"],
+                        result["metadatas"],
+                        result["distances"]
+                    )):
+                        st.markdown(f"**문서 {i+1}** (유사도: {1-distance:.4f})")
+                        st.info(doc)
+                        st.write(f"메타데이터: {metadata}")
+                        st.markdown("---")
+                except Exception as e:
+                    progress_bar.empty()  # 오류 발생 시 프로그레스 바 제거
+                    status_text.empty()   # 상태 텍스트 제거
+                    st.error(f"Ollama 질의 중 오류 발생: {e}")
     
     # Ollama 설명
     with st.expander("Ollama란?"):
