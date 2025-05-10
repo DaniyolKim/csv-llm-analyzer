@@ -29,12 +29,6 @@ python -m venv venv
 call venv\Scripts\activate.bat
 ```
 
-Windows (PowerShell):
-```
-python -m venv venv
-PowerShell -ExecutionPolicy Bypass -File venv\Scripts\Activate.ps1
-```
-
 macOS/Linux:
 ```
 python -m venv venv
