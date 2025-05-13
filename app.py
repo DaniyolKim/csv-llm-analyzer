@@ -363,18 +363,11 @@ if st.session_state.rag_enabled:
         
         # 프롬프트 입력 (여러 줄 입력 가능)
         prompt = st.text_area(
-            "Prompt (지시사항)",
+            "Prompt (지시사항 ex: 역할극을 부탁해. 너는  40대 직장인 여성이야. 나와 사무실에서 대화하는 상황이라고 생각하고 답해줘. 너의 주요 관심사는 다이어트와 피부미용이야.)",
             height=150,
             placeholder="모델에게 전달할 지시사항을 입력하세요. 예: '다음 질문에 한국어로 답변해주세요.'"
         )
-        
-        # 질문 입력 (여러 줄 입력 가능)
-        question = st.text_area(
-            "Question (질문)",
-            height=100,
-            placeholder="실제 질문을 입력하세요. 예: '이 데이터에서 가장 중요한 정보는 무엇인가요?'"
-        )
-        
+
         # 참조할 문서 수 설정 (최소 3, 최대 20)
         n_results = st.slider(
                 "참조할 문서 수", 
@@ -384,6 +377,13 @@ if st.session_state.rag_enabled:
                 step=1,
                 help="참조할 문서 수를 선택하세요. 일반적으로 3-5개가 적당합니다."
             )
+        
+        # 질문 입력 (여러 줄 입력 가능)
+        question = st.text_area(
+            "Question (질문)",
+            height=100,
+            placeholder="실제 질문을 입력하세요. 예: '이 데이터에서 가장 중요한 정보는 무엇인가요?'"
+        )
         
         # Ollama로 질의하기
         if st.button("질의하기") and st.session_state.chroma_collection is not None:
