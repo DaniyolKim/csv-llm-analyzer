@@ -1,6 +1,7 @@
 import os
 import argparse
 import chromadb
+import ollama
 from utils import clean_text
 
 def load_chroma_collection(persist_directory="./chroma_db", collection_name="csv_test"):
@@ -27,41 +28,7 @@ def load_chroma_collection(persist_directory="./chroma_db", collection_name="csv
     except Exception as e:
         raise ValueError(f"컬렉션을 로드할 수 없습니다: {e}")
 
-def query_ollama_api(prompt, model_name="llama2"):
-    """
-    HTTP 요청을 통해 Ollama 모델에 질의합니다.
-    
-    Args:
-        prompt (str): 프롬프트
-        model_name (str): Ollama 모델 이름
-        
-    Returns:
-        str: 모델 응답
-    """
-    try:
-        import requests
-        
-        # Ollama API 호출
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": model_name,
-                "prompt": prompt,
-                "stream": False
-            }
-        )
-        
-        if response.status_code == 200:
-            return response.json()["response"]
-        else:
-            return f"오류: {response.status_code} - {response.text}"
-    
-    except ImportError:
-        return "requests 패키지가 설치되어 있지 않습니다. 'pip install requests'를 실행하세요."
-    except Exception as e:
-        return f"Ollama 서버 연결 오류: {e}"
-
-def query_ollama_lib(prompt, model_name="llama2"):
+def query_ollama(prompt, model_name="llama2"):
     """
     Ollama 라이브러리를 사용하여 모델에 질의합니다.
     
@@ -73,8 +40,6 @@ def query_ollama_lib(prompt, model_name="llama2"):
         str: 모델 응답
     """
     try:
-        import ollama
-        
         # Ollama 라이브러리 사용
         response = ollama.generate(model=model_name, prompt=prompt)
         return response['response']
@@ -84,28 +49,7 @@ def query_ollama_lib(prompt, model_name="llama2"):
     except Exception as e:
         return f"Ollama 라이브러리 오류: {e}"
 
-def query_ollama(prompt, model_name="llama2", use_lib=True):
-    """
-    Ollama 모델에 질의합니다.
-    
-    Args:
-        prompt (str): 프롬프트
-        model_name (str): Ollama 모델 이름
-        use_lib (bool): Ollama 라이브러리 사용 여부
-        
-    Returns:
-        str: 모델 응답
-    """
-    if use_lib:
-        try:
-            return query_ollama_lib(prompt, model_name)
-        except Exception:
-            # 라이브러리 방식이 실패하면 API 방식으로 폴백
-            return query_ollama_api(prompt, model_name)
-    else:
-        return query_ollama_api(prompt, model_name)
-
-def get_ollama_models_lib():
+def get_ollama_models():
     """
     Ollama 라이브러리를 사용하여 설치된 모델 목록을 가져옵니다.
     
@@ -113,8 +57,6 @@ def get_ollama_models_lib():
         list: 설치된 모델 목록
     """
     try:
-        import ollama
-        
         models = ollama.list()
         return [model['name'] for model in models['models']]
     except ImportError:
@@ -122,7 +64,7 @@ def get_ollama_models_lib():
     except Exception:
         return []
 
-def rag_query(collection, query, model_name="llama2", n_results=5, use_lib=True, similarity_threshold=0.7, metadata_filter=None):
+def rag_query(collection, query, model_name="llama2", n_results=5, similarity_threshold=0.7, metadata_filter=None):
     """
     RAG 시스템에 질의합니다.
     
@@ -131,7 +73,6 @@ def rag_query(collection, query, model_name="llama2", n_results=5, use_lib=True,
         query (str): 질의 텍스트
         model_name (str): Ollama 모델 이름
         n_results (int): 검색할 결과 수, 0이면 최대 20개 문서 사용, 최소 3개 문서 사용
-        use_lib (bool): Ollama 라이브러리 사용 여부
         similarity_threshold (float): 유사도 임계값 (0~1 사이, 높을수록 더 유사한 문서만 사용)
         metadata_filter (dict): 메타데이터 필터링 조건 (예: {"source": "특정 출처"})
         
@@ -218,7 +159,7 @@ def rag_query(collection, query, model_name="llama2", n_results=5, use_lib=True,
     답변:
     """
     
-    response = query_ollama(prompt, model_name, use_lib)
+    response = query_ollama(prompt, model_name)
     
     return {
         "query": query,
@@ -228,14 +169,13 @@ def rag_query(collection, query, model_name="llama2", n_results=5, use_lib=True,
         "response": response
     }
 
-def interactive_mode(collection, model_name="llama2", use_lib=True):
+def interactive_mode(collection, model_name="llama2"):
     """
     대화형 모드로 RAG 시스템을 실행합니다.
     
     Args:
         collection (chromadb.Collection): ChromaDB 컬렉션
         model_name (str): Ollama 모델 이름
-        use_lib (bool): Ollama 라이브러리 사용 여부
     """
     print("\n=== RAG 시스템 대화형 모드 ===")
     print("종료하려면 'exit' 또는 'quit'를 입력하세요.\n")
@@ -247,7 +187,7 @@ def interactive_mode(collection, model_name="llama2", use_lib=True):
             break
         
         print("\n답변 생성 중...")
-        result = rag_query(collection, query, model_name, use_lib=use_lib)
+        result = rag_query(collection, query, model_name)
         
         print("\n=== 답변 ===")
         print(result["response"])
@@ -258,14 +198,13 @@ def interactive_mode(collection, model_name="llama2", use_lib=True):
             print(f"내용: {doc}")
             print(f"메타데이터: {metadata}")
 
-def interactive_mode_enhanced(collection, model_name="llama2", use_lib=True, similarity_threshold=0.7, metadata_filter=None):
+def interactive_mode_enhanced(collection, model_name="llama2", similarity_threshold=0.7, metadata_filter=None):
     """
     개선된 대화형 모드로 RAG 시스템을 실행합니다.
     
     Args:
         collection (chromadb.Collection): ChromaDB 컬렉션
         model_name (str): Ollama 모델 이름
-        use_lib (bool): Ollama 라이브러리 사용 여부
         similarity_threshold (float): 유사도 임계값
         metadata_filter (dict): 메타데이터 필터
     """
@@ -316,8 +255,7 @@ def interactive_mode_enhanced(collection, model_name="llama2", use_lib=True, sim
         result = rag_query(
             collection, 
             query, 
-            model_name, 
-            use_lib=use_lib,
+            model_name,
             similarity_threshold=similarity_threshold,
             metadata_filter=metadata_filter
         )
@@ -342,7 +280,6 @@ def main():
     parser.add_argument("--collection", default="csv_test", help="ChromaDB 컬렉션 이름")
     parser.add_argument("--model", default="llama2", help="Ollama 모델 이름")
     parser.add_argument("--query", help="실행할 질의 (지정하지 않으면 대화형 모드)")
-    parser.add_argument("--api", action="store_true", help="API 방식 사용 (라이브러리 대신)")
     parser.add_argument("--similarity", type=float, default=0.7, help="유사도 임계값 (0~1 사이)")
     parser.add_argument("--metadata", help="메타데이터 필터 (JSON 형식, 예: '{\"source\":\"특정 출처\"}')")
     
@@ -352,9 +289,6 @@ def main():
         # ChromaDB 컬렉션 로드
         print(f"ChromaDB를 로드합니다: {args.db_path}, 컬렉션: {args.collection}")
         collection = load_chroma_collection(args.db_path, args.collection)
-        
-        # Ollama 라이브러리 사용 여부
-        use_lib = not args.api
         
         # 메타데이터 필터 파싱
         metadata_filter = None
@@ -367,14 +301,12 @@ def main():
                 print(f"메타데이터 필터 형식이 잘못되었습니다: {args.metadata}")
                 print("올바른 JSON 형식을 사용하세요. 예: '{\"source\":\"특정 출처\"}'")
         
-        if use_lib:
-            try:
-                import ollama
-                print("Ollama 라이브러리를 사용합니다.")
-            except ImportError:
-                print("Ollama 라이브러리를 찾을 수 없습니다. API 방식으로 전환합니다.")
-                print("Ollama 라이브러리를 설치하려면: pip install ollama")
-                use_lib = False
+        try:
+            import ollama
+            print("Ollama 라이브러리를 사용합니다.")
+        except ImportError:
+            print("Ollama 라이브러리를 찾을 수 없습니다. 'pip install ollama'를 실행하세요.")
+            raise
         
         if args.query:
             # 단일 질의 모드
@@ -384,8 +316,7 @@ def main():
             result = rag_query(
                 collection, 
                 args.query, 
-                args.model, 
-                use_lib=use_lib,
+                args.model,
                 similarity_threshold=args.similarity,
                 metadata_filter=metadata_filter
             )
@@ -402,7 +333,7 @@ def main():
         else:
             # 대화형 모드
             print(f"유사도 임계값: {args.similarity}")
-            interactive_mode_enhanced(collection, args.model, use_lib=use_lib, similarity_threshold=args.similarity, metadata_filter=metadata_filter)
+            interactive_mode_enhanced(collection, args.model, similarity_threshold=args.similarity, metadata_filter=metadata_filter)
     
     except Exception as e:
         print(f"오류 발생: {e}")
