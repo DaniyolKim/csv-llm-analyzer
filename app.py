@@ -588,20 +588,6 @@ if st.session_state.rag_enabled:
                     
                     # 페이지 새로고침하여 채팅 기록 업데이트
                     st.rerun()
-    
-    # Ollama 설명
-    with st.expander("Ollama란?"):
-        st.markdown("""
-        **Ollama**는 로컬 환경에서 대규모 언어 모델(LLM)을 실행할 수 있게 해주는 도구입니다.
-        
-        주요 특징:
-        - 로컬에서 실행되므로 데이터가 외부로 전송되지 않습니다.
-        - 다양한 오픈 소스 모델을 지원합니다 (Llama 2, Mistral, Gemma 등).
-        - 가볍고 빠르게 실행됩니다.
-        - Python 라이브러리를 통해 쉽게 통합할 수 있습니다.
-        
-        [Ollama 공식 웹사이트](https://ollama.ai/)에서 더 많은 정보를 확인할 수 있습니다.
-        """)
 else:
     st.info("Ollama 연동을 사용하려면 먼저 데이터를 ChromaDB에 저장하거나 기존 컬렉션을 로드하세요.")
 
@@ -621,17 +607,3 @@ with st.sidebar:
     """)
     
     st.markdown("---")
-    
-    # RAG 시스템 설명
-    st.subheader("RAG 시스템이란?")
-    st.markdown("""
-    **RAG(Retrieval-Augmented Generation)**는 대규모 언어 모델(LLM)의 성능을 향상시키는 기술입니다.
-    
-    작동 방식:
-    1. 사용자 질의가 들어오면 관련 정보를 벡터 데이터베이스에서 검색합니다.
-    2. 검색된 정보를 LLM의 프롬프트에 추가하여 더 정확한 응답을 생성합니다.
-    3. 이를 통해 최신 정보 제공, 환각 현상 감소, 도메인 특화 응답이 가능해집니다.
-    """)
-    
-    st.markdown("---")
-    st.markdown("Made with ❤️ using Streamlit")
