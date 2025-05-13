@@ -54,8 +54,7 @@ if 'current_question' not in st.session_state:
     st.session_state.current_question = ""
 
 # 제목
-st.title("텍스트 CSV 파일 분석기 & RAG 시스템")
-st.markdown("텍스트 위주의 CSV 파일을 업로드하여 RAG 시스템을 구성하세요.")
+st.title("Custom RAG")
 
 # 사이드바에 기존 ChromaDB 로드 옵션 추가
 with st.sidebar:
