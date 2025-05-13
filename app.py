@@ -46,6 +46,12 @@ if 'chroma_path' not in st.session_state:
     st.session_state.chroma_path = "./chroma_db"
 if 'collection_name' not in st.session_state:
     st.session_state.collection_name = "csv_test"
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'current_question' not in st.session_state:
+    st.session_state.current_question = ""
+if 'current_question' not in st.session_state:
+    st.session_state.current_question = ""
 
 # 제목
 st.title("텍스트 CSV 파일 분석기 & RAG 시스템")
@@ -346,30 +352,33 @@ if st.session_state.rag_enabled:
         st.success("✅ Ollama가 준비되었습니다.")
         
         # 모델 선택
-        selected_model = st.selectbox(
-            "사용할 모델 선택", 
-            st.session_state.ollama_models,
-            index=0 if "llama2" not in st.session_state.ollama_models else st.session_state.ollama_models.index("llama2")
-        )
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            selected_model = st.selectbox(
+                "사용할 모델 선택", 
+                st.session_state.ollama_models,
+                index=0 if "llama2" not in st.session_state.ollama_models else st.session_state.ollama_models.index("llama2")
+            )
         
-        # 모델 새로고침 버튼
-        if st.button("모델 목록 새로고침"):
-            with st.spinner("모델 목록을 가져오는 중..."):
-                st.session_state.ollama_models = get_ollama_models()
-                st.rerun()
-        
-        # 프롬프트와 질문 입력 (2군데로 나누기)
-        st.subheader("입력 설정")
+        with col2:
+            # 모델 새로고침 버튼
+            if st.button("모델 목록 새로고침", use_container_width=True):
+                with st.spinner("모델 목록을 가져오는 중..."):
+                    st.session_state.ollama_models = get_ollama_models()
+                    st.rerun()
         
         # 프롬프트 입력 (여러 줄 입력 가능)
-        prompt = st.text_area(
-            "Prompt (지시사항 ex: 역할극을 부탁해. 너는  40대 직장인 여성이야. 나와 사무실에서 대화하는 상황이라고 생각하고 답해줘. 너의 주요 관심사는 다이어트와 피부미용이야.)",
-            height=150,
-            placeholder="모델에게 전달할 지시사항을 입력하세요. 예: '다음 질문에 한국어로 답변해주세요.'"
-        )
-
-        # 참조할 문서 수 설정 (최소 3, 최대 20)
-        n_results = st.slider(
+        with st.expander("시스템 프롬프트 설정", expanded=False):
+            prompt = st.text_area(
+                "시스템 프롬프트 (지시사항)",
+                height=150,
+                placeholder="모델에게 전달할 지시사항을 입력하세요.",
+                value=st.session_state.get('prompt', '')
+            )
+            st.session_state['prompt'] = prompt
+            
+            # 참조할 문서 수 설정 (최소 3, 최대 20)
+            n_results = st.slider(
                 "참조할 문서 수", 
                 min_value=3, 
                 max_value=20, 
@@ -378,15 +387,134 @@ if st.session_state.rag_enabled:
                 help="참조할 문서 수를 선택하세요. 일반적으로 3-5개가 적당합니다."
             )
         
-        # 질문 입력 (여러 줄 입력 가능)
-        question = st.text_area(
-            "Question (질문)",
-            height=100,
-            placeholder="실제 질문을 입력하세요. 예: '이 데이터에서 가장 중요한 정보는 무엇인가요?'"
-        )
+        # 채팅 인터페이스 컨테이너
+        chat_container = st.container()
         
-        # Ollama로 질의하기
-        if st.button("질의하기") and st.session_state.chroma_collection is not None:
+        # 채팅 인터페이스 스타일 적용
+        st.markdown("""
+        <style>
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 60vh;
+            overflow-y: auto;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            background-color: #f0f2f6;
+        }
+        .user-message {
+            background-color: #e1f5fe;
+            padding: 10px;
+            border-radius: 10px;
+            margin: 5px 0;
+            align-self: flex-end;
+        }
+        .assistant-message {
+            background-color: #ffffff;
+            padding: 10px;
+            border-radius: 10px;
+            margin: 5px 0;
+            align-self: flex-start;
+        }
+        .message-input {
+            position: sticky;
+            bottom: 0;
+            background-color: white;
+            padding: 10px;
+            border-top: 1px solid #e0e0e0;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # 채팅 기록 표시
+        with chat_container:
+            st.subheader("대화")
+            
+            # 채팅 기록 컨트롤 버튼
+            col1, col2, col3 = st.columns([1, 1, 4])
+            with col1:
+                if st.button("대화 기록 지우기", key="clear_history"):
+                    st.session_state.chat_history = []
+                    st.rerun()
+            with col2:
+                if st.button("새 대화 시작", key="new_chat"):
+                    st.session_state.chat_history = []
+                    st.session_state.current_question = ""
+                    st.rerun()
+            
+            # 채팅 기록을 표시할 컨테이너
+            chat_history_container = st.container(height=400)
+            
+            # 기존 채팅 기록 표시
+            with chat_history_container:
+                for chat in st.session_state.chat_history:
+                    if chat["role"] == "user":
+                        message_container = st.container()
+                        with message_container:
+                            col1, col2 = st.columns([1, 9])
+                            with col1:
+                                st.markdown("### 🧑")
+                            with col2:
+                                st.markdown(f"**사용자** <span style='color:gray;font-size:0.8em;'>{chat['timestamp']}</span>", unsafe_allow_html=True)
+                                st.markdown(chat["content"])
+                    elif chat["role"] == "assistant":
+                        message_container = st.container()
+                        with message_container:
+                            col1, col2 = st.columns([1, 9])
+                            with col1:
+                                st.markdown("### 🤖")
+                            with col2:
+                                st.markdown(f"**AI 어시스턴트** <span style='color:gray;font-size:0.8em;'>{chat['timestamp']}</span>", unsafe_allow_html=True)
+                                st.markdown(chat["content"])
+                                
+                                # 참조 문서가 있으면 확장 가능한 섹션으로 표시
+                                if "references" in chat:
+                                    with st.expander("참조 문서", expanded=False):
+                                        for i, (doc, metadata, distance) in enumerate(zip(
+                                            chat["references"]["docs"],
+                                            chat["references"]["metadatas"],
+                                            chat["references"]["distances"]
+                                        )):
+                                            st.markdown(f"**문서 {i+1}** (유사도: {1-distance:.4f})")
+                                            st.info(doc)
+                                            st.write(f"메타데이터: {metadata}")
+                                            if i < len(chat["references"]["docs"]) - 1:
+                                                st.markdown("---")
+                    elif chat["role"] == "error":
+                        message_container = st.container()
+                        with message_container:
+                            col1, col2 = st.columns([1, 9])
+                            with col1:
+                                st.markdown("### ⚠️")
+                            with col2:
+                                st.markdown(f"**시스템 오류** <span style='color:gray;font-size:0.8em;'>{chat['timestamp']}</span>", unsafe_allow_html=True)
+                                st.error(chat["content"])
+            
+            # 구분선
+            st.markdown("---")
+            
+            # 질문 입력 영역과 전송 버튼 (하단에 고정)
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                question = st.text_area(
+                    "질문을 입력하세요",
+                    key="question_input",
+                    height=80,
+                    placeholder="질문을 입력한 후 전송 버튼을 클릭하세요.",
+                    value=st.session_state.current_question,
+                    on_change=lambda: setattr(st.session_state, 'current_question', '')
+                )
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)  # 간격 조정
+                submit_question = st.button("전송", key="submit_question", use_container_width=True)
+        
+        # 질문이 입력되었고 전송 버튼이 클릭되었을 때
+        if (question or st.session_state.current_question) and submit_question and st.session_state.chroma_collection is not None:
+            # 현재 질문 가져오기
+            current_question = question if question else st.session_state.current_question
+            st.session_state.current_question = ""  # 질문 초기화
+            
             # 프롬프트와 질문을 합쳐서 query 생성
             combined_query = ""
             
@@ -395,30 +523,32 @@ if st.session_state.rag_enabled:
                 combined_query += prompt.strip() + "\n\n"
                 
             # 질문 추가
-            if question:
-                combined_query += question.strip()
+            if current_question:
+                combined_query += current_question.strip()
             
             if not combined_query.strip():
                 st.warning("프롬프트 또는 질문을 입력하세요.")
             else:
-                # 진행 상황 표시를 위한 컴포넌트
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                status_text.text("ChromaDB에서 관련 문서를 검색 중...")
+                # 채팅 기록에 질문 추가
+                st.session_state.chat_history.append({
+                    "role": "user",
+                    "content": current_question,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+                # 응답 생성 중 표시
+                message_container = st.container()
+                with message_container:
+                    col1, col2 = st.columns([1, 9])
+                    with col1:
+                        st.markdown("### 🤖")
+                    with col2:
+                        st.markdown(f"**AI 어시스턴트**")
+                        status_text = st.empty()
+                        status_text.markdown("*응답 생성 중...*")
                 
                 try:
-                    # 디버깅용 - 실제 전송되는 쿼리 표시
-                    with st.expander("전송되는 쿼리 확인"):
-                        st.code(combined_query)
-                    
-                    # 1단계: ChromaDB 검색 준비 (10%)
-                    progress_bar.progress(10)
                     import time
-                    time.sleep(0.5)  # 진행 상황을 시각적으로 보여주기 위한 지연
-                    
-                    # 2단계: ChromaDB 검색 시작 (30%)
-                    progress_bar.progress(30)
-                    status_text.text("ChromaDB에서 관련 문서 검색 중...")
                     
                     # 쿼리 텍스트 정제 및 ChromaDB 검색 준비
                     from utils import clean_text
@@ -426,13 +556,6 @@ if st.session_state.rag_enabled:
                     
                     # n_results 처리
                     actual_n_results = n_results
-                    
-                    # 3단계: ChromaDB 검색 실행 (50%)
-                    progress_bar.progress(50)
-                    
-                    # 4단계: Ollama 모델에 질의 시작 (70%)
-                    progress_bar.progress(70)
-                    status_text.text(f"Ollama({selected_model})에 질의하여 응답 생성 중...")
                     
                     # RAG 쿼리 실행
                     result = rag_query_with_ollama(
@@ -442,30 +565,30 @@ if st.session_state.rag_enabled:
                         actual_n_results
                     )
                     
-                    # 5단계: 응답 생성 완료 (100%)
-                    progress_bar.progress(100)
-                    status_text.text("응답 생성 완료!")
-                    time.sleep(0.5)  # 완료 메시지를 잠시 표시
-                    status_text.empty()  # 상태 텍스트 지우기
+                    # 채팅 기록에 응답 추가
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": result["response"],
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "references": {
+                            "docs": result["context"],
+                            "metadatas": result["metadatas"],
+                            "distances": result["distances"]
+                        }
+                    })
                     
-                    # 결과 표시
-                    st.subheader("Ollama 응답")
-                    st.markdown(result["response"])
-                    
-                    st.subheader("참조 문서")
-                    for i, (doc, metadata, distance) in enumerate(zip(
-                        result["context"],
-                        result["metadatas"],
-                        result["distances"]
-                    )):
-                        st.markdown(f"**문서 {i+1}** (유사도: {1-distance:.4f})")
-                        st.info(doc)
-                        st.write(f"메타데이터: {metadata}")
-                        st.markdown("---")
+                    # 페이지 새로고침하여 채팅 기록 업데이트
+                    st.rerun()
                 except Exception as e:
-                    progress_bar.empty()  # 오류 발생 시 프로그레스 바 제거
-                    status_text.empty()   # 상태 텍스트 제거
-                    st.error(f"Ollama 질의 중 오류 발생: {e}")
+                    # 오류 메시지를 채팅 기록에 추가
+                    st.session_state.chat_history.append({
+                        "role": "error",
+                        "content": f"오류 발생: {e}",
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    
+                    # 페이지 새로고침하여 채팅 기록 업데이트
+                    st.rerun()
     
     # Ollama 설명
     with st.expander("Ollama란?"):
