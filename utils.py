@@ -409,19 +409,11 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     collection_exists = collection_name in [c.name for c in collections]
     
     if collection_exists:
-        if overwrite:
-            # 기존 컬렉션 삭제 후 새로 생성
-            client.delete_collection(collection_name)
-            collection = client.create_collection(
-                name=collection_name,
-                embedding_function=embedding_function
-            )
-        else:
-            # 기존 컬렉션 사용
-            collection = client.get_collection(
-                name=collection_name,
-                embedding_function=embedding_function
-            )
+        # 기존 컬렉션 사용
+        collection = client.get_collection(
+            name=collection_name,
+            embedding_function=embedding_function
+        )
     else:
         # 새 컬렉션 생성
         collection = client.create_collection(
@@ -880,7 +872,14 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5):
         "distances": results["distances"][0],
         "response": response
     }
-
+""" 
+| 목적                 | 추천 모델                                 |
+| ------------------ | ------------------------------------- |
+| 전반적 의미 임베딩 (가장 추천) | `snunlp/KR-SBERT-V40K-klueNLI-augSTS` |
+| 속도 중요 & 경량화 필요     | `BM-K/KoMiniLM-Sentence-Transformers` |
+| 감정, 문장 유사도         | `jhgan/ko-sbert-sts`                  |
+| 금융/도메인 특화          | `jinmang2/kpf-sbert`                  |
+ """
 def get_available_embedding_models():
     """
     사용 가능한 임베딩 모델 목록을 반환합니다.
@@ -895,14 +894,8 @@ def get_available_embedding_models():
             "distiluse-base-multilingual-cased-v2"  # 다국어 지원 모델 (크기 큼)
         ],
         "한국어 특화 모델": [
-            "naver-hyperclovax/embeddings-multi-ko",  # 네이버 HyperCLOVA X 다국어 임베딩 모델 (한국어 특화)
-            "naver-hyperclovax/embeddings-multi",  # 네이버 HyperCLOVA X 다국어 임베딩 모델
-            "naver-hyperclovax/embeddings-similarity-ko",  # 네이버 HyperCLOVA X 문서 유사도 임베딩 (한국어)
-            "naver-hyperclovax/embeddings-search-ko",  # 네이버 HyperCLOVA X 검색용 임베딩 (한국어)
-            "LGAI-EXAONE/ke-t5-base-ko",  # EXAONE 기반 한국어 임베딩 모델 (기본)
-            "LGAI-EXAONE/ke-t5-large-ko",  # EXAONE 기반 한국어 임베딩 모델 (대형)
-            "LGAI-EXAONE/exaone-embedding-ko",  # EXAONE 한국어 특화 임베딩
-            "LGAI-EXAONE/exaone-embedding-ko-large"  # EXAONE 한국어 특화 임베딩 (대형)
+            "snunlp/KR-SBERT-V40K-klueNLI-augSTS",
+            "jhgan/ko-sbert-sts"
         ],
         "영어 특화 모델": [
             "all-mpnet-base-v2",  # 영어 특화 고성능 모델

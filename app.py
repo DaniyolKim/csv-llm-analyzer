@@ -91,7 +91,7 @@ with st.sidebar:
             # 컬렉션 목록 표시
             st.write("### 컬렉션 목록")
             for collection in available_collections:
-                col1, col2 = st.columns([4, 1])
+                col1, col2 = st.columns([7, 2])
                 with col1:
                     # 컬렉션 이름 표시
                     is_selected = st.radio(

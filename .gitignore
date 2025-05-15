@@ -40,7 +40,7 @@ env/
 *.xls
 *.db
 *.sqlite
-chroma_db
+chroma_db*
 
 # Logs
 *.log
