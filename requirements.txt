@@ -5,5 +5,4 @@ chromadb
 requests
 ollama
 kss
-uuid
 sentence-transformers
