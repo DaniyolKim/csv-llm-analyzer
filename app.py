@@ -13,7 +13,10 @@ from utils import (
     get_ollama_install_guide,
     rag_query_with_ollama,
     get_available_collections,
-    load_chroma_collection
+    load_chroma_collection,
+    get_available_embedding_models,
+    delete_collection,  # 삭제 함수 추가
+    get_embedding_status  # 임베딩 상태 확인 함수 추가
 )
 
 # 페이지 설정
@@ -53,6 +56,10 @@ if 'current_question' not in st.session_state:
 if 'current_question' not in st.session_state:
     st.session_state.current_question = ""
 
+# 세션 상태에 임베딩 모델 관련 상태 추가
+if 'embedding_model' not in st.session_state:
+    st.session_state.embedding_model = "all-MiniLM-L6-v2"  # 기본 임베딩 모델
+
 # 제목
 st.title("Custom RAG")
 
@@ -70,22 +77,90 @@ with st.sidebar:
     if available_collections:
         st.success(f"✅ {len(available_collections)}개의 컬렉션을 찾았습니다.")
         
-        # 컬렉션 선택
-        selected_collection = st.selectbox(
-            "컬렉션 선택", 
-            available_collections,
-            index=0 if st.session_state.collection_name not in available_collections else available_collections.index(st.session_state.collection_name)
-        )
-        st.session_state.collection_name = selected_collection
+        # 삭제할 컬렉션 상태 관리
+        if 'collection_to_delete' not in st.session_state:
+            st.session_state.collection_to_delete = None
+            
+        if 'show_delete_confirm' not in st.session_state:
+            st.session_state.show_delete_confirm = False
+            
+        # 컬렉션 선택을 위한 컨테이너
+        collection_container = st.container()
         
+        with collection_container:
+            # 컬렉션 목록 표시
+            st.write("### 컬렉션 목록")
+            for collection in available_collections:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    # 컬렉션 이름 표시
+                    is_selected = st.radio(
+                        label="",
+                        options=[collection],
+                        key=f"radio_{collection}",
+                        label_visibility="collapsed",
+                        index=0 if collection == st.session_state.collection_name else None
+                    )
+                    if is_selected:
+                        st.session_state.collection_name = collection
+                
+                with col2:
+                    # 삭제 버튼
+                    if st.button("삭제", key=f"delete_{collection}", type="secondary"):
+                        st.session_state.collection_to_delete = collection
+                        st.session_state.show_delete_confirm = True
+                        
+        # 삭제 확인 다이얼로그
+        if st.session_state.show_delete_confirm and st.session_state.collection_to_delete:
+            with st.expander(f"'{st.session_state.collection_to_delete}' 컬렉션을 삭제하시겠습니까?", expanded=True):
+                st.warning(f"'{st.session_state.collection_to_delete}' 컬렉션의 모든 데이터가 삭제됩니다.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("확인", key="confirm_delete", type="primary"):
+                        # 컬렉션 삭제 수행
+                        success = delete_collection(st.session_state.collection_to_delete, chroma_path)
+                        if success:
+                            # 현재 로드된 컬렉션이 삭제되었다면 상태 초기화
+                            if st.session_state.collection_name == st.session_state.collection_to_delete:
+                                st.session_state.chroma_collection = None
+                                st.session_state.chroma_client = None
+                                st.session_state.rag_enabled = False
+                            
+                            st.success(f"'{st.session_state.collection_to_delete}' 컬렉션이 삭제되었습니다.")
+                            # 상태 초기화
+                            st.session_state.collection_to_delete = None
+                            st.session_state.show_delete_confirm = False
+                            
+                            # 페이지 새로고침
+                            st.rerun()
+                        else:
+                            st.error(f"'{st.session_state.collection_to_delete}' 컬렉션 삭제 중 오류가 발생했습니다.")
+                
+                with col2:
+                    if st.button("취소", key="cancel_delete"):
+                        st.session_state.collection_to_delete = None
+                        st.session_state.show_delete_confirm = False
+                        st.rerun()
+                    
         # 컬렉션 로드 버튼
         if st.button("컬렉션 로드"):
             try:
-                client, collection = load_chroma_collection(selected_collection, chroma_path)
+                client, collection = load_chroma_collection(st.session_state.collection_name, chroma_path)
                 st.session_state.chroma_client = client
                 st.session_state.chroma_collection = collection
                 st.session_state.rag_enabled = True
-                st.success(f"컬렉션 '{selected_collection}'을 성공적으로 로드했습니다.")
+                
+                # 임베딩 모델 상태 확인
+                embedding_status = get_embedding_status()
+                if embedding_status["fallback_used"]:
+                    st.warning(f"""
+                    ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.
+                    - 요청 모델: {embedding_status["requested_model"]}
+                    - 사용된 모델: {embedding_status["actual_model"]}
+                    - 원인: {embedding_status["error_message"]}
+                    """)
+                
+                st.success(f"컬렉션 '{st.session_state.collection_name}'을 성공적으로 로드했습니다.")
             except Exception as e:
                 st.error(f"컬렉션 로드 중 오류 발생: {e}")
     else:
@@ -94,9 +169,23 @@ with st.sidebar:
     st.markdown("---")
 
 # 파일 업로드
-uploaded_file = st.file_uploader("CSV 파일 선택", type=["csv"])
+st.subheader("CSV 파일 선택")
 
-if uploaded_file is not None:
+# 파일 입력 방식 선택 (업로드 또는 경로 입력)
+file_input_method = st.radio("파일 입력 방법", ["파일 업로드", "파일 경로 입력"])
+
+if file_input_method == "파일 업로드":
+    uploaded_file = st.file_uploader("CSV 파일 선택", type=["csv"])
+    file_path = None
+else:
+    uploaded_file = None
+    file_path = st.text_input("CSV 파일 경로 입력 (전체 경로)", placeholder="예: C:/path/to/your/file.csv")
+    if file_path and not os.path.isfile(file_path):
+        st.error(f"파일을 찾을 수 없습니다: {file_path}")
+        file_path = None
+
+# 파일이 업로드되었거나 유효한 경로가 입력된 경우
+if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
     # 데이터 로드
     try:
         # 인코딩 옵션
@@ -104,9 +193,14 @@ if uploaded_file is not None:
         selected_encoding = st.selectbox("인코딩 선택", encoding_options, index=0)
         
         try:
-            df = pd.read_csv(uploaded_file, encoding=selected_encoding)
-            st.session_state.df = df
-            st.success("파일 업로드 성공!")
+            if uploaded_file is not None:
+                df = pd.read_csv(uploaded_file, encoding=selected_encoding)
+                st.session_state.df = df
+                st.success("파일 업로드 성공!")
+            else:
+                df = pd.read_csv(file_path, encoding=selected_encoding)
+                st.session_state.df = df
+                st.success(f"파일 로드 성공: {file_path}")
         except UnicodeDecodeError:
             st.error(f"{selected_encoding} 인코딩으로 파일을 읽을 수 없습니다. 다른 인코딩을 선택해 주세요.")
             st.stop()
@@ -214,6 +308,41 @@ if uploaded_file is not None:
         collection_name = st.text_input("컬렉션 이름", value=st.session_state.collection_name)
         persist_directory = st.text_input("저장 경로", value=st.session_state.chroma_path)
         
+        # 임베딩 모델 선택 UI
+        st.write("임베딩 모델 선택:")
+        
+        # 사용 가능한 임베딩 모델 목록 가져오기
+        embedding_models_by_category = get_available_embedding_models()
+        
+        # 모델 카테고리 선택 (한국어, 다국어, 영어)
+        model_category = st.radio(
+            "모델 카테고리",
+            list(embedding_models_by_category.keys()),
+            index=1 if "한국어 특화 모델" in embedding_models_by_category else 0,
+            horizontal=True
+        )
+        
+        # 선택한 카테고리의 모델 목록
+        selected_category_models = embedding_models_by_category[model_category]
+        
+        # 모델 선택
+        selected_embedding_model = st.selectbox(
+            "임베딩 모델",
+            selected_category_models,
+            index=0
+        )
+        
+        # 선택한 모델 세션 상태에 저장
+        st.session_state.embedding_model = selected_embedding_model
+        
+        # 모델 설명 표시
+        if model_category == "한국어 특화 모델":
+            st.info("한국어 특화 모델은 한글 텍스트에 최적화되어 있습니다.")
+        elif model_category == "다국어 모델":
+            st.info("다국어 모델은 여러 언어를 지원하며 한글도 처리할 수 있습니다.")
+        elif model_category == "영어 특화 모델":
+            st.warning("영어 특화 모델은 영어 텍스트에 최적화되어 있습니다. 한글 처리 성능이 낮을 수 있습니다.")
+        
         # ChromaDB 저장 버튼
         if st.button("ChromaDB에 데이터 저장"):
             if not selected_columns:
@@ -235,7 +364,8 @@ if uploaded_file is not None:
                             collection_name, 
                             persist_directory,
                             max_rows=max_process_rows,
-                            batch_size=batch_size
+                            batch_size=batch_size,
+                            embedding_model=st.session_state.embedding_model  # 선택한 임베딩 모델 전달
                         )
                         
                         progress_bar.progress(100)
@@ -245,6 +375,16 @@ if uploaded_file is not None:
                         st.session_state.chroma_collection = collection
                         st.session_state.collection_name = collection_name
                         st.session_state.chroma_path = persist_directory
+                        
+                        # 임베딩 모델 상태 확인
+                        embedding_status = get_embedding_status()
+                        if embedding_status["fallback_used"]:
+                            st.warning(f"""
+                            ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.
+                            - 요청 모델: {embedding_status["requested_model"]}
+                            - 사용된 모델: {embedding_status["actual_model"]}
+                            - 원인: {embedding_status["error_message"]}
+                            """)
                         
                         if max_process_rows:
                             st.success(f"ChromaDB에 데이터가 성공적으로 저장되었습니다. 컬렉션: {collection_name} (처리된 행 수: {max_process_rows})")

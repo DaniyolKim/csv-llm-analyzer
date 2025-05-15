@@ -6,12 +6,65 @@ import chromadb
 import subprocess
 import json
 import platform
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
+import kss  # 한글 문장 분할 라이브러리 추가
+from chromadb.utils import embedding_functions  # 임베딩 함수 추가
+import warnings
+import ssl
+import requests
+
+# SSL 인증서 검증 우회 옵션 (기본값은 검증함)
+ssl._create_default_https_context_backup = ssl._create_default_https_context
+VERIFY_SSL = True
+
+# 임베딩 모델 로드 상태를 추적하기 위한 변수
+EMBEDDING_MODEL_STATUS = {
+    "requested_model": None,  # 요청한 임베딩 모델
+    "actual_model": None,     # 실제 사용중인 임베딩 모델
+    "fallback_used": False,   # 폴백(기본 모델)을 사용했는지 여부
+    "error_message": None     # 오류 메시지 (있는 경우)
+}
+
+def reset_embedding_status():
+    """임베딩 모델 상태를 초기화합니다."""
+    global EMBEDDING_MODEL_STATUS
+    EMBEDDING_MODEL_STATUS = {
+        "requested_model": None,
+        "actual_model": None,
+        "fallback_used": False,
+        "error_message": None
+    }
+    
+def get_embedding_status():
+    """현재 임베딩 모델 상태를 반환합니다."""
+    return EMBEDDING_MODEL_STATUS.copy()
+
+def set_ssl_verification(verify=True):
+    """
+    SSL 인증서 검증 여부를 설정합니다.
+    
+    Args:
+        verify (bool): SSL 인증서 검증 여부 (True: 검증함, False: 검증하지 않음)
+    """
+    global VERIFY_SSL
+    VERIFY_SSL = verify
+    
+    if verify:
+        # 기본 SSL 컨텍스트 복원 (SSL 인증서 검증 활성화)
+        ssl._create_default_https_context = ssl._create_default_https_context_backup
+        # requests 라이브러리 설정
+        requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
+    else:
+        # SSL 인증서 검증을 우회하는 컨텍스트 설정
+        ssl._create_default_https_context = ssl._create_unverified_context
+        # requests 라이브러리의 SSL 검증 경고 무시
+        warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+        requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
 def clean_text(text):
     """
-    텍스트에서 산술 기호를 제외한 특수문자를 제거합니다.
+    텍스트에서 불필요한 특수문자를 제거하되, 문장 구분 기호와 필수 문법 부호는 보존합니다.
+    URL도 제거합니다.
     
     Args:
         text (str): 정제할 텍스트
@@ -22,9 +75,18 @@ def clean_text(text):
     if not isinstance(text, str):
         return str(text)
     
-    # 산술 기호(+, -, *, /, %, =)를 제외한 특수문자 제거
-    # 영문, 숫자, 한글, 공백, 산술 기호만 유지
-    cleaned_text = re.sub(r'[^\w\s+\-*/=%.,()[\]]+', ' ', text)
+    # URL 패턴 제거 (http://, https://, www. 로 시작하는 주소)
+    cleaned_text = re.sub(r'https?://\S+|www\.\S+', ' ', text)
+    
+    # 문장 구분 기호와 필수 문법 부호를 보존하면서 불필요한 특수문자 제거
+    # 보존할 문자: 
+    # - 영문, 숫자, 한글, 공백
+    # - 문장 구분 기호: . ? ! ; : 등
+    # - 인용 부호: " ' ` 등
+    # - 괄호: () [] {} 등
+    # - 산술 기호: + - * / % = 등
+    # - 기타 필수 문법 부호: , & @ # 등
+    cleaned_text = re.sub(r'[^\w\s\.\?!;:\'\"\/\(\)\[\]\{\}\+\-\*/%=,&@#]', ' ', cleaned_text)
     
     # 연속된 공백을 하나의 공백으로 치환
     cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
@@ -60,7 +122,7 @@ def preprocess_dataframe(df, selected_columns, max_rows=None):
     
     return selected_df
 
-def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db", overwrite=False):
+def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db", overwrite=False, embedding_model="all-MiniLM-L6-v2"):
     """
     ChromaDB 클라이언트와 컬렉션을 생성합니다.
     
@@ -68,15 +130,128 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
         overwrite (bool): 기존 컬렉션을 덮어쓸지 여부
+        embedding_model (str): 임베딩 모델 이름 (기본값: all-MiniLM-L6-v2, 
+                              한국어 데이터에는 snunlp/KR-SBERT-V40K-klueNLI-augSTS, KoSimCSE, 
+                              다국어 데이터에는 paraphrase-multilingual-MiniLM-L12-v2 추천)
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
     """
+    # 임베딩 상태 초기화
+    global EMBEDDING_MODEL_STATUS
+    reset_embedding_status()
+    EMBEDDING_MODEL_STATUS["requested_model"] = embedding_model
+    
     # 디렉토리가 없으면 생성
     os.makedirs(persist_directory, exist_ok=True)
     
     # ChromaDB 클라이언트 생성
     client = chromadb.PersistentClient(path=persist_directory)
+    
+    # 임베딩 함수 설정
+    if embedding_model == "default" or embedding_model is None:
+        # 기본 임베딩 모델(all-MiniLM-L6-v2) 명시적으로 사용
+        try:
+            print("기본 임베딩 모델(all-MiniLM-L6-v2)을 로드합니다.")
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
+            EMBEDDING_MODEL_STATUS["fallback_used"] = False
+        except Exception as e:
+            print(f"기본 임베딩 모델 로드 중 오류 발생: {e}")
+            print("내장 기본 임베딩 함수를 사용합니다.")
+            embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+            EMBEDDING_MODEL_STATUS["fallback_used"] = True
+            EMBEDDING_MODEL_STATUS["error_message"] = str(e)
+    else:
+        # 먼저 SSL 검증 활성화 상태로 시도
+        try:
+            print(f"임베딩 모델 '{embedding_model}' 로드 시도 중...")
+            # sentence-transformers 기반 임베딩 함수 생성
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=embedding_model
+            )
+            print(f"임베딩 모델 '{embedding_model}' 로드 성공!")
+            EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
+            EMBEDDING_MODEL_STATUS["fallback_used"] = False
+        except Exception as e:
+            print(f"임베딩 모델 '{embedding_model}' 로드 중 오류 발생: {e}")
+            error_msg = str(e)
+            
+            # SSL 오류인 경우 검증 우회 시도
+            if "CERTIFICATE_VERIFY_FAILED" in error_msg or "SSL" in error_msg:
+                print("SSL 인증서 검증 실패, 검증을 우회하여 다시 시도합니다...")
+                
+                # SSL 인증서 검증 비활성화
+                old_verify = VERIFY_SSL
+                set_ssl_verification(False)
+                
+                try:
+                    # 검증 우회 모드로 다시 시도
+                    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                        model_name=embedding_model
+                    )
+                    print(f"SSL 검증 우회 모드로 '{embedding_model}' 임베딩 모델을 성공적으로 로드했습니다.")
+                    EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
+                    EMBEDDING_MODEL_STATUS["fallback_used"] = False
+                except Exception as inner_e:
+                    inner_error_msg = str(inner_e)
+                    print(f"SSL 검증을 우회해도 임베딩 모델 로드 실패: {inner_error_msg}")
+                    
+                    # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
+                    if "unrecognized model" in inner_error_msg.lower() or "no model with name" in inner_error_msg.lower():
+                        print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
+                        print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
+                        
+                        try:
+                            # 기본 모델로 대체
+                            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                                model_name="all-MiniLM-L6-v2"
+                            )
+                            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
+                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
+                        except Exception:
+                            print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
+                            embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
+                    else:
+                        print("내장 기본 임베딩 함수를 사용합니다.")
+                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                        EMBEDDING_MODEL_STATUS["error_message"] = inner_error_msg
+                
+                # SSL 인증서 검증 상태 복원
+                set_ssl_verification(old_verify)
+            else:
+                # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
+                if "unrecognized model" in error_msg.lower() or "no model with name" in error_msg.lower():
+                    print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
+                    print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
+                    
+                    try:
+                        # 기본 모델로 대체
+                        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                            model_name="all-MiniLM-L6-v2"
+                        )
+                        EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
+                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
+                    except Exception:
+                        print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
+                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
+                else:
+                    print("내장 기본 임베딩 함수를 사용합니다.")
+                    embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                    EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                    EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                    EMBEDDING_MODEL_STATUS["error_message"] = error_msg
     
     # 컬렉션 존재 여부 확인
     collections = client.list_collections()
@@ -86,27 +261,42 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
         if overwrite:
             # 기존 컬렉션 삭제 후 새로 생성
             client.delete_collection(collection_name)
-            collection = client.create_collection(name=collection_name)
+            collection = client.create_collection(
+                name=collection_name,
+                embedding_function=embedding_function
+            )
         else:
             # 기존 컬렉션 사용
-            collection = client.get_collection(name=collection_name)
+            collection = client.get_collection(
+                name=collection_name,
+                embedding_function=embedding_function
+            )
     else:
         # 새 컬렉션 생성
-        collection = client.create_collection(name=collection_name)
+        collection = client.create_collection(
+            name=collection_name,
+            embedding_function=embedding_function
+        )
     
     return client, collection
 
-def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db"):
+def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db", embedding_model="all-MiniLM-L6-v2"):
     """
     기존 ChromaDB 컬렉션을 로드합니다.
     
     Args:
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
+        embedding_model (str): 임베딩 모델 이름
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
     """
+    # 임베딩 상태 초기화
+    global EMBEDDING_MODEL_STATUS
+    reset_embedding_status()
+    EMBEDDING_MODEL_STATUS["requested_model"] = embedding_model
+    
     # 디렉토리가 없으면 오류
     if not os.path.exists(persist_directory):
         raise FileNotFoundError(f"ChromaDB 경로를 찾을 수 없습니다: {persist_directory}")
@@ -114,16 +304,130 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     # ChromaDB 클라이언트 생성
     client = chromadb.PersistentClient(path=persist_directory)
     
-    # 컬렉션 목록 확인
+    # 임베딩 함수 설정
+    if embedding_model == "default" or embedding_model is None:
+        # 기본 임베딩 모델(all-MiniLM-L6-v2) 명시적으로 사용
+        try:
+            print("기본 임베딩 모델(all-MiniLM-L6-v2)을 로드합니다.")
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
+            EMBEDDING_MODEL_STATUS["fallback_used"] = False
+        except Exception as e:
+            print(f"기본 임베딩 모델 로드 중 오류 발생: {e}")
+            print("내장 기본 임베딩 함수를 사용합니다.")
+            embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+            EMBEDDING_MODEL_STATUS["fallback_used"] = True
+            EMBEDDING_MODEL_STATUS["error_message"] = str(e)
+    else:
+        # 먼저 SSL 검증 활성화 상태로 시도
+        try:
+            # sentence-transformers 기반 임베딩 함수 생성
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=embedding_model
+            )
+            EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
+            EMBEDDING_MODEL_STATUS["fallback_used"] = False
+        except Exception as e:
+            # SSL 오류인 경우 검증 우회 시도
+            if "CERTIFICATE_VERIFY_FAILED" in str(e) or "SSL" in str(e):
+                print("SSL 인증서 검증 실패, 검증을 우회하여 다시 시도합니다...")
+                
+                # SSL 인증서 검증 비활성화
+                old_verify = VERIFY_SSL
+                set_ssl_verification(False)
+                
+                try:
+                    # 검증 우회 모드로 다시 시도
+                    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                        model_name=embedding_model
+                    )
+                    print(f"SSL 검증 우회 모드로 '{embedding_model}' 임베딩 모델을 성공적으로 로드했습니다.")
+                    EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
+                    EMBEDDING_MODEL_STATUS["fallback_used"] = False
+                except Exception as inner_e:
+                    inner_error_msg = str(inner_e)
+                    print(f"SSL 검증을 우회해도 임베딩 모델 로드 실패: {inner_error_msg}")
+                    
+                    # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
+                    if "unrecognized model" in inner_error_msg.lower() or "no model with name" in inner_error_msg.lower():
+                        print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
+                        print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
+                        
+                        try:
+                            # 기본 모델로 대체
+                            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                                model_name="all-MiniLM-L6-v2"
+                            )
+                            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
+                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
+                        except Exception:
+                            print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
+                            embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
+                    else:
+                        print("내장 기본 임베딩 함수를 사용합니다.")
+                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                        EMBEDDING_MODEL_STATUS["error_message"] = inner_error_msg
+                
+                # SSL 인증서 검증 상태 복원
+                set_ssl_verification(old_verify)
+            else:
+                # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
+                if "unrecognized model" in str(e).lower() or "no model with name" in str(e).lower():
+                    print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
+                    print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
+                    
+                    try:
+                        # 기본 모델로 대체
+                        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                            model_name="all-MiniLM-L6-v2"
+                        )
+                        EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
+                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
+                    except Exception:
+                        print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
+                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
+                else:
+                    print("내장 기본 임베딩 함수를 사용합니다.")
+                    embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                    EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+                    EMBEDDING_MODEL_STATUS["fallback_used"] = True
+                    EMBEDDING_MODEL_STATUS["error_message"] = str(e)
+    
+    # 컬렉션 존재 여부 확인
     collections = client.list_collections()
-    collection_names = [c.name for c in collections]
+    collection_exists = collection_name in [c.name for c in collections]
     
-    # 컬렉션이 없으면 오류
-    if collection_name not in collection_names:
-        raise ValueError(f"컬렉션 '{collection_name}'을 찾을 수 없습니다. 사용 가능한 컬렉션: {collection_names}")
-    
-    # 컬렉션 로드
-    collection = client.get_collection(collection_name)
+    if collection_exists:
+        if overwrite:
+            # 기존 컬렉션 삭제 후 새로 생성
+            client.delete_collection(collection_name)
+            collection = client.create_collection(
+                name=collection_name,
+                embedding_function=embedding_function
+            )
+        else:
+            # 기존 컬렉션 사용
+            collection = client.get_collection(
+                name=collection_name,
+                embedding_function=embedding_function
+            )
+    else:
+        # 새 컬렉션 생성
+        collection = client.create_collection(
+            name=collection_name,
+            embedding_function=embedding_function
+        )
     
     return client, collection
 
@@ -151,7 +455,9 @@ def get_available_collections(persist_directory="./chroma_db"):
     except:
         return []
 
-def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persist_directory="./chroma_db", chunk_size=500, chunk_overlap=50, max_rows=None, batch_size=100, append=True):
+def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persist_directory="./chroma_db", 
+                          chunk_size=500, chunk_overlap=50, max_rows=None, batch_size=100, append=True, 
+                          embedding_model="all-MiniLM-L6-v2"):
     """
     선택한 열의 데이터를 ChromaDB에 저장합니다.
     
@@ -160,11 +466,12 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         selected_columns (list): 저장할 열 이름 목록
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
-        chunk_size (int): 청크 크기
+        chunk_size (int): 청크 크기 (최대 문장 길이)
         chunk_overlap (int): 청크 오버랩 크기
         max_rows (int, optional): 처리할 최대 행 수
         batch_size (int): 배치 처리 크기
         append (bool): 기존 컬렉션에 데이터를 추가할지 여부
+        embedding_model (str): 임베딩 모델 이름 (기본값: all-MiniLM-L6-v2)
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -176,15 +483,8 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     if selected_df.empty:
         raise ValueError("선택한 열에 유효한 데이터가 없습니다. 결측치가 있는 행은 모두 제거됩니다.")
     
-    # ChromaDB 생성 또는 로드
-    client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append)
-    
-    # 텍스트 분할기 생성
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        length_function=len
-    )
+    # ChromaDB 생성 또는 로드 (임베딩 모델 지정)
+    client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append, embedding_model=embedding_model)
     
     # 배치 처리를 위한 변수 초기화
     batch_documents = []
@@ -207,44 +507,68 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         # 행 데이터를 문자열로 변환
         row_text = " ".join([f"{col}: {str(val)}" for col, val in row.items()])
         
-        # 텍스트가 충분히 길면 분할
-        if len(row_text) > chunk_size:
-            chunks = text_splitter.split_text(row_text)
-            for i, chunk in enumerate(chunks):
-                # 고유 ID 생성 (UUID 사용)
-                doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
-                
-                # ID 중복 확인
-                while doc_id in existing_ids:
-                    doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
-                
-                existing_ids.add(doc_id)
-                batch_documents.append(chunk)
-                batch_metadatas.append({"source": f"row_{idx}", "chunk": i})
-                batch_ids.append(doc_id)
-                
-                # 배치 크기에 도달하면 저장
-                if len(batch_documents) >= batch_size:
-                    collection.add(
-                        documents=batch_documents,
-                        metadatas=batch_metadatas,
-                        ids=batch_ids
-                    )
-                    batch_documents = []
-                    batch_metadatas = []
-                    batch_ids = []
-        else:
-            # 짧은 텍스트는 그대로 저장
-            # 고유 ID 생성 (UUID 사용)
-            doc_id = f"row_{idx}_{uuid.uuid4().hex[:8]}"
+        try:
+            # kss를 사용하여 한글 문장 단위로 분할
+            sentences = kss.split_sentences(row_text)
             
+            # 문장들을 최대 길이(chunk_size)를 고려하여 청크로 결합
+            chunks = []
+            current_chunk = ""
+            
+            for sentence in sentences:
+                # 하나의 문장이 chunk_size보다 길면 그대로 청크로 추가
+                if len(sentence) > chunk_size:
+                    if current_chunk:
+                        chunks.append(current_chunk)
+                        current_chunk = ""
+                    chunks.append(sentence)
+                    continue
+                
+                # 현재 청크에 문장을 추가했을 때 chunk_size를 초과하는지 확인
+                if len(current_chunk) + len(sentence) + 1 > chunk_size:  # +1: 공백 고려
+                    chunks.append(current_chunk)
+                    current_chunk = sentence
+                else:
+                    # 공백 추가 (첫 문장이 아닌 경우)
+                    if current_chunk:
+                        current_chunk += " " + sentence
+                    else:
+                        current_chunk = sentence
+            
+            # 남은 청크가 있으면 추가
+            if current_chunk:
+                chunks.append(current_chunk)
+                
+            # 청크가 없으면 원본 텍스트를 그대로 사용
+            if not chunks:
+                chunks = [row_text]
+                
+        except Exception as e:
+            print(f"문장 분할 중 오류 발생: {e}, 기본 분할 방식 사용")
+            # kss 분할에 실패한 경우, 간단히 텍스트 길이로 분할
+            chunks = []
+            for i in range(0, len(row_text), chunk_size - chunk_overlap):
+                end = min(i + chunk_size, len(row_text))
+                chunks.append(row_text[i:end])
+                if end >= len(row_text):
+                    break
+            
+            # 청크가 너무 작으면 하나로 합치기
+            if len(chunks) == 1 or all(len(chunk) < chunk_size // 4 for chunk in chunks):
+                chunks = [row_text]
+        
+        # 청크 처리
+        for i, chunk in enumerate(chunks):
+            # 고유 ID 생성 (UUID 사용)
+            doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
+
             # ID 중복 확인
             while doc_id in existing_ids:
-                doc_id = f"row_{idx}_{uuid.uuid4().hex[:8]}"
-            
+                doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
+
             existing_ids.add(doc_id)
-            batch_documents.append(row_text)
-            batch_metadatas.append({"source": f"row_{idx}"})
+            batch_documents.append(chunk)
+            batch_metadatas.append({"source": f"row_{idx}", "chunk": i})
             batch_ids.append(doc_id)
             
             # 배치 크기에 도달하면 저장
@@ -556,3 +880,67 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5):
         "distances": results["distances"][0],
         "response": response
     }
+
+def get_available_embedding_models():
+    """
+    사용 가능한 임베딩 모델 목록을 반환합니다.
+    
+    Returns:
+        dict: 카테고리별 추천 임베딩 모델
+    """
+    return {
+        "다국어 모델": [
+            "all-MiniLM-L6-v2",  # 기본 모델
+            "paraphrase-multilingual-MiniLM-L12-v2",  # 다국어 지원 모델
+            "distiluse-base-multilingual-cased-v2"  # 다국어 지원 모델 (크기 큼)
+        ],
+        "한국어 특화 모델": [
+            "naver-hyperclovax/embeddings-multi-ko",  # 네이버 HyperCLOVA X 다국어 임베딩 모델 (한국어 특화)
+            "naver-hyperclovax/embeddings-multi",  # 네이버 HyperCLOVA X 다국어 임베딩 모델
+            "naver-hyperclovax/embeddings-similarity-ko",  # 네이버 HyperCLOVA X 문서 유사도 임베딩 (한국어)
+            "naver-hyperclovax/embeddings-search-ko",  # 네이버 HyperCLOVA X 검색용 임베딩 (한국어)
+            "LGAI-EXAONE/ke-t5-base-ko",  # EXAONE 기반 한국어 임베딩 모델 (기본)
+            "LGAI-EXAONE/ke-t5-large-ko",  # EXAONE 기반 한국어 임베딩 모델 (대형)
+            "LGAI-EXAONE/exaone-embedding-ko",  # EXAONE 한국어 특화 임베딩
+            "LGAI-EXAONE/exaone-embedding-ko-large"  # EXAONE 한국어 특화 임베딩 (대형)
+        ],
+        "영어 특화 모델": [
+            "all-mpnet-base-v2",  # 영어 특화 고성능 모델
+            "all-distilroberta-v1",  # 영어 특화 경량 모델
+            "all-MiniLM-L12-v2"  # 영어 특화 모델
+        ]
+    }
+
+def delete_collection(collection_name, persist_directory="./chroma_db"):
+    """
+    ChromaDB 컬렉션을 삭제합니다.
+    
+    Args:
+        collection_name (str): 삭제할 컬렉션 이름
+        persist_directory (str): 데이터베이스 저장 경로
+        
+    Returns:
+        bool: 삭제 성공 여부
+    """
+    # 디렉토리가 없으면 False 반환
+    if not os.path.exists(persist_directory):
+        return False
+    
+    try:
+        # ChromaDB 클라이언트 생성
+        client = chromadb.PersistentClient(path=persist_directory)
+        
+        # 컬렉션 목록 확인
+        collections = client.list_collections()
+        collection_names = [c.name for c in collections]
+        
+        # 컬렉션이 없으면 False 반환
+        if collection_name not in collection_names:
+            return False
+        
+        # 컬렉션 삭제
+        client.delete_collection(collection_name)
+        return True
+    except Exception as e:
+        print(f"컬렉션 삭제 중 오류 발생: {e}")
+        return False
