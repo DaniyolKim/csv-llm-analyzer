@@ -1,7 +1,8 @@
 # CSV LLM Analyzer
 
 텍스트 CSV 파일을 분석하고 RAG(Retrieval-Augmented Generation) 시스템을 구성하는 도구입니다.
-(python 3.10에서 동작함)
+
+(kss lib 사용을 위해 python 3.10에서 동작함)
 
 ## 주요 기능
 
