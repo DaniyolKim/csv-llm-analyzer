@@ -583,7 +583,7 @@ if st.session_state.rag_enabled:
                     st.rerun()
             
             # 채팅 기록을 표시할 컨테이너
-            chat_history_container = st.container(height=400)
+            chat_history_container = st.container(height=600)
             
             # 기존 채팅 기록 표시
             with chat_history_container:
