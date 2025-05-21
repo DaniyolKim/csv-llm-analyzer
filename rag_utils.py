@@ -3,6 +3,7 @@ RAG(Retrieval-Augmented Generation) 시스템 관련 유틸리티 함수 모음
 """
 from text_utils import clean_text
 from ollama_utils import query_ollama
+from chroma_utils import hybrid_query_chroma
 
 def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, similarity_threshold=None):
     """
@@ -37,30 +38,36 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
     elif n_results > 20:
         n_results = 20
     
-    # ChromaDB에서 관련 문서 검색
-    results = collection.query(
-        query_texts=[cleaned_query],
-        n_results=n_results
-    )
+    # 하이브리드 검색 사용 (임베딩 + 키워드 검색)
+    results = hybrid_query_chroma(collection, cleaned_query, n_results=n_results)
     
     # 유사도 임계값이 설정된 경우 필터링 적용
     filtered_docs = []
     filtered_metadatas = []
     filtered_distances = []
+    filtered_search_types = []
     
     if similarity_threshold is not None and 0 <= similarity_threshold <= 1:
-        for doc, metadata, distance in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
+        for i, (doc, metadata, distance) in enumerate(zip(
+            results["documents"][0], 
+            results["metadatas"][0], 
+            results["distances"][0]
+        )):
             # ChromaDB의 distance는 거리 개념이므로 1에서 빼서 유사도로 변환 (1에 가까울수록 유사)
             similarity = 1 - distance
             if similarity >= similarity_threshold:
                 filtered_docs.append(doc)
                 filtered_metadatas.append(metadata)
                 filtered_distances.append(distance)
+                if "search_type" in results:
+                    filtered_search_types.append(results["search_type"][0][i])
     else:
         # 임계값이 없으면 모든 결과 사용
         filtered_docs = results["documents"][0]
         filtered_metadatas = results["metadatas"][0]
         filtered_distances = results["distances"][0]
+        if "search_type" in results:
+            filtered_search_types = results["search_type"][0]
     
     # 필터링 후 문서가 없는 경우 처리
     if not filtered_docs:
@@ -69,6 +76,7 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
             "context": [],
             "metadatas": [],
             "distances": [],
+            "search_types": [],
             "response": f"유사도 임계값({similarity_threshold})을 충족하는 문서를 찾을 수 없습니다. 임계값을 낮추거나 다른 질문을 시도해보세요."
         }
     
@@ -103,6 +111,7 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
         "context": filtered_docs,
         "metadatas": filtered_metadatas,
         "distances": filtered_distances,
+        "search_types": filtered_search_types if filtered_search_types else [],
         "response": response
     }
 
@@ -131,12 +140,9 @@ def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_res
     elif n_results is None or n_results < 3:
         n_results = 5
     
-    # ChromaDB에서 관련 문서 검색 (메타데이터 필터 적용)
-    results = collection.query(
-        query_texts=[cleaned_query],
-        n_results=n_results,
-        where=metadata_filter
-    )
+    # 하이브리드 검색 사용 (임베딩 + 키워드 검색)
+    # 현재 하이브리드 검색은 메타데이터 필터를 직접 지원하지 않으므로 결과를 후처리
+    results = hybrid_query_chroma(collection, cleaned_query, n_results=n_results * 2)  # 더 많은 결과를 가져와서 필터링
     
     # 결과가 없는 경우 처리
     if not results["documents"][0]:
@@ -145,27 +151,48 @@ def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_res
             "context": [],
             "metadatas": [],
             "distances": [],
-            "response": "메타데이터 필터 조건에 맞는 문서를 찾을 수 없습니다."
+            "search_types": [],
+            "response": "검색 결과가 없습니다."
         }
     
-    # 유사도 임계값이 설정된 경우 필터링 적용
+    # 메타데이터 필터링 및 유사도 임계값 적용
     filtered_docs = []
     filtered_metadatas = []
     filtered_distances = []
+    filtered_search_types = []
     
-    if similarity_threshold is not None and 0 <= similarity_threshold <= 1:
-        for doc, metadata, distance in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
-            # ChromaDB의 distance는 거리 개념이므로 1에서 빼서 유사도로 변환
+    for i, (doc, metadata, distance) in enumerate(zip(
+        results["documents"][0], 
+        results["metadatas"][0], 
+        results["distances"][0]
+    )):
+        # 메타데이터 필터 적용
+        if metadata_filter:
+            match = True
+            for key, value in metadata_filter.items():
+                if key not in metadata or metadata[key] != value:
+                    match = False
+                    break
+            
+            if not match:
+                continue
+        
+        # 유사도 임계값 적용
+        if similarity_threshold is not None and 0 <= similarity_threshold <= 1:
             similarity = 1 - distance
-            if similarity >= similarity_threshold:
-                filtered_docs.append(doc)
-                filtered_metadatas.append(metadata)
-                filtered_distances.append(distance)
-    else:
-        # 임계값이 없으면 모든 결과 사용
-        filtered_docs = results["documents"][0]
-        filtered_metadatas = results["metadatas"][0]
-        filtered_distances = results["distances"][0]
+            if similarity < similarity_threshold:
+                continue
+        
+        # 필터를 통과한 결과 추가
+        filtered_docs.append(doc)
+        filtered_metadatas.append(metadata)
+        filtered_distances.append(distance)
+        if "search_type" in results:
+            filtered_search_types.append(results["search_type"][0][i])
+        
+        # 최대 결과 수에 도달하면 중단
+        if len(filtered_docs) >= n_results:
+            break
     
     # 필터링 후 문서가 없는 경우 처리
     if not filtered_docs:
@@ -174,7 +201,8 @@ def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_res
             "context": [],
             "metadatas": [],
             "distances": [],
-            "response": f"유사도 임계값({similarity_threshold})을 충족하는 문서를 찾을 수 없습니다."
+            "search_types": [],
+            "response": "메타데이터 필터 조건이나 유사도 임계값을 충족하는 문서를 찾을 수 없습니다."
         }
     
     # 검색 결과를 컨텍스트로 사용
@@ -205,5 +233,6 @@ def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_res
         "context": filtered_docs,
         "metadatas": filtered_metadatas,
         "distances": filtered_distances,
+        "search_types": filtered_search_types if filtered_search_types else [],
         "response": response
     }

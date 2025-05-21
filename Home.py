@@ -12,6 +12,7 @@ from utils import (
     delete_collection,
     get_embedding_status
 )
+from embedding_utils import get_available_embedding_models
 
 # 페이지 설정
 st.set_page_config(
@@ -43,6 +44,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'current_question' not in st.session_state:
     st.session_state.current_question = ""
+if 'embedding_model' not in st.session_state:
+    st.session_state.embedding_model = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"
 
 # 제목
 st.title("Custom RAG")
@@ -93,6 +96,24 @@ with st.sidebar:
                     if st.button("삭제", key=f"delete_{collection}", type="secondary"):
                         st.session_state.collection_to_delete = collection
                         st.session_state.show_delete_confirm = True
+        
+        # 임베딩 모델 선택
+        st.write("### 임베딩 모델 선택")
+        embedding_models = get_available_embedding_models()
+        all_models = []
+        for category, models in embedding_models.items():
+            all_models.extend(models)
+        
+        selected_embedding_model = st.selectbox(
+            "임베딩 모델",
+            options=all_models,
+            index=all_models.index(st.session_state.embedding_model) if st.session_state.embedding_model in all_models else 0,
+            help="검색에 사용할 임베딩 모델을 선택하세요. DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다."
+        )
+        
+        # 임베딩 모델 선택 시 세션 상태 업데이트
+        if selected_embedding_model != st.session_state.embedding_model:
+            st.session_state.embedding_model = selected_embedding_model
                         
         # 삭제 확인 다이얼로그
         if st.session_state.show_delete_confirm and st.session_state.collection_to_delete:
@@ -129,7 +150,11 @@ with st.sidebar:
         # 컬렉션 로드 버튼
         if st.button("컬렉션 로드"):
             try:
-                client, collection = load_chroma_collection(st.session_state.collection_name, chroma_path)
+                client, collection = load_chroma_collection(
+                    st.session_state.collection_name, 
+                    chroma_path,
+                    embedding_model=st.session_state.embedding_model
+                )
                 st.session_state.chroma_client = client
                 st.session_state.chroma_collection = collection
                 st.session_state.rag_enabled = True
