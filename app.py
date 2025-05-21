@@ -730,20 +730,3 @@ if st.session_state.rag_enabled:
                     st.rerun()
 else:
     st.info("Ollama 연동을 사용하려면 먼저 데이터를 ChromaDB에 저장하거나 기존 컬렉션을 로드하세요.")
-
-# 사이드바 정보 (하단)
-with st.sidebar:
-    st.header("텍스트 CSV 분석기 & RAG 정보")
-    st.info("""
-    이 애플리케이션은 텍스트 위주의 CSV 파일을 분석하고 RAG 시스템을 구성하기 위한 도구입니다.
-    
-    기능:
-    - CSV 파일 미리보기
-    - 텍스트 데이터 분석
-    - 데이터 전처리 (결측치 제거, 특수문자 제거)
-    - ChromaDB에 데이터 저장
-    - 기존 ChromaDB 컬렉션 로드
-    - Ollama를 통한 RAG 시스템 구성
-    """)
-    
-    st.markdown("---")
