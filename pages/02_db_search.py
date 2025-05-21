@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from chroma_utils import load_chroma_collection, get_available_collections, query_chroma
+from chroma_utils import load_chroma_collection, get_available_collections, query_chroma, hybrid_query_chroma
 from embedding_utils import get_available_embedding_models
 
 st.set_page_config(
@@ -145,6 +145,14 @@ else:
                     index=all_models.index("snunlp/KR-SBERT-V40K-klueNLI-augSTS") if "snunlp/KR-SBERT-V40K-klueNLI-augSTS" in all_models else 0,
                     help="검색에 사용할 임베딩 모델을 선택하세요. DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다."
                 )
+                
+                # 검색 방식 선택
+                search_method = st.radio(
+                    "검색 방식",
+                    options=["하이브리드 검색", "임베딩 검색"],
+                    index=0,
+                    help="하이브리드 검색은 임베딩 기반 의미 검색과 키워드 기반 검색을 결합합니다. 임베딩 검색은 의미적 유사성만 고려합니다."
+                )
             
             with col2:
                 # 검색 결과 수 설정
@@ -175,8 +183,11 @@ else:
                             embedding_model=selected_model
                         )
                         
-                        # 쿼리 실행
-                        results = query_chroma(collection, query, n_results=n_results)
+                        # 검색 방식에 따라 쿼리 실행
+                        if search_method == "하이브리드 검색":
+                            results = hybrid_query_chroma(collection, query, n_results=n_results)
+                        else:
+                            results = query_chroma(collection, query, n_results=n_results)
                         
                         if results and results["documents"] and results["documents"][0]:
                             # 결과 표시
@@ -192,10 +203,16 @@ else:
                                 # 유사도 점수 계산 (거리를 유사도로 변환)
                                 similarity = 1 - distance
                                 
-                                # 임계값 필터링 제거 - 모든 결과 표시
+                                # 검색 유형 확인 (하이브리드 검색인 경우)
+                                search_type = "임베딩"
+                                if search_method == "하이브리드 검색" and "search_type" in results:
+                                    search_type = "키워드" if results["search_type"][0][i] == "keyword" else "임베딩"
+                                
+                                # 모든 결과 표시
                                 result_data.append({
                                     "순위": i + 1,
                                     "유사도": f"{similarity:.4f}",
+                                    "검색 유형": search_type,
                                     "출처": metadata.get("source", "알 수 없음"),
                                     "청크": metadata.get("chunk", "알 수 없음"),
                                     "내용": doc
@@ -210,6 +227,7 @@ else:
                                 column_config={
                                     "순위": st.column_config.NumberColumn(width="small"),
                                     "유사도": st.column_config.TextColumn(width="small"),
+                                    "검색 유형": st.column_config.TextColumn(width="small"),
                                     "출처": st.column_config.TextColumn(width="small"),
                                     "청크": st.column_config.NumberColumn(width="small"),
                                     "내용": st.column_config.TextColumn(width="large")
@@ -263,9 +281,23 @@ with st.expander("사용 방법"):
     
     #### DB 검색 탭
     1. 임베딩 모델을 선택합니다. (DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다)
-    2. 검색 결과 수를 조정합니다.
-    3. 검색어를 입력하고 '검색' 버튼을 클릭합니다.
-    4. 검색 결과는 유사도가 높은 순으로 정렬됩니다.
+    2. 검색 방식을 선택합니다:
+       - 하이브리드 검색: 임베딩 기반 의미 검색과 키워드 기반 검색을 결합합니다.
+       - 임베딩 검색: 의미적 유사성만 고려합니다.
+    3. 검색 결과 수를 조정합니다.
+    4. 검색어를 입력하고 '검색' 버튼을 클릭합니다.
+    5. 검색 결과는 유사도가 높은 순으로 정렬됩니다.
+    
+    ### 검색 방식
+    
+    #### 하이브리드 검색
+    - 임베딩 기반 의미 검색과 키워드 기반 검색을 결합합니다.
+    - 단어 검색에 더 효과적이며, 정확한 단어 매칭을 포함합니다.
+    - 검색 결과에 '검색 유형'이 표시됩니다. (임베딩 또는 키워드)
+    
+    #### 임베딩 검색
+    - 의미적 유사성만 고려합니다.
+    - 문맥 이해에 더 효과적이지만, 정확한 단어 매칭에는 약할 수 있습니다.
     
     ### ChromaDB 경로
     
@@ -280,4 +312,5 @@ with st.expander("사용 방법"):
     ### 유사도 점수
     
     유사도 점수는 0에서 1 사이의 값으로, 1에 가까울수록 검색어와 유사한 내용입니다.
+    키워드 검색 결과의 경우 유사도 점수는 임의로 설정됩니다.
     """)
