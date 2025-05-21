@@ -4,6 +4,7 @@
 import ssl
 import warnings
 import requests
+import numpy as np
 from chromadb.utils import embedding_functions
 
 # SSL 인증서 검증 우회 옵션 (기본값은 검증함)
@@ -175,6 +176,67 @@ def get_embedding_function(embedding_model="all-MiniLM-L6-v2"):
                     EMBEDDING_MODEL_STATUS["error_message"] = error_msg
     
     return embedding_function
+
+class L2NormalizedEmbeddingFunction:
+    """
+    L2 정규화를 적용한 임베딩 함수 래퍼 클래스
+    
+    기본 임베딩 함수에서 생성된 벡터에 L2 정규화를 적용하여 유사도 계산의 일관성을 높입니다.
+    """
+    
+    def __init__(self, base_embedding_function):
+        """
+        L2 정규화 임베딩 함수 초기화
+        
+        Args:
+            base_embedding_function: 기본 임베딩 함수
+        """
+        self.base_embedding_function = base_embedding_function
+        
+    def __call__(self, input):
+        """
+        텍스트를 임베딩 벡터로 변환하고 L2 정규화를 적용합니다.
+        
+        Args:
+            input: 임베딩할 텍스트 목록
+            
+        Returns:
+            list: L2 정규화된 임베딩 벡터 목록
+        """
+        # 기본 임베딩 함수로 벡터 생성
+        embeddings = self.base_embedding_function(input)
+        
+        # L2 정규화 적용
+        normalized_embeddings = []
+        for emb in embeddings:
+            # L2 노름(벡터 크기) 계산
+            norm = np.linalg.norm(emb)
+            # 0으로 나누기 방지
+            if norm > 0:
+                normalized_emb = emb / norm
+            else:
+                normalized_emb = emb
+            normalized_embeddings.append(normalized_emb)
+            
+        return normalized_embeddings
+
+
+def get_normalized_embedding_function(embedding_model="all-MiniLM-L6-v2"):
+    """
+    L2 정규화가 적용된 임베딩 함수를 생성합니다.
+    
+    Args:
+        embedding_model (str): 임베딩 모델 이름
+        
+    Returns:
+        L2NormalizedEmbeddingFunction: L2 정규화된 임베딩 함수
+    """
+    # 기본 임베딩 함수 생성
+    base_function = get_embedding_function(embedding_model)
+    
+    # L2 정규화 래퍼 적용
+    return L2NormalizedEmbeddingFunction(base_function)
+
 
 def get_available_embedding_models():
     """

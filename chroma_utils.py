@@ -7,7 +7,7 @@ import kss
 import chromadb
 from text_utils import clean_text
 from data_utils import preprocess_dataframe
-from embedding_utils import get_embedding_function, get_embedding_status
+from embedding_utils import get_embedding_function, get_embedding_status, get_normalized_embedding_function
 
 def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db", overwrite=False, embedding_model="all-MiniLM-L6-v2"):
     """
@@ -28,8 +28,8 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
     # ChromaDB 클라이언트 생성
     client = chromadb.PersistentClient(path=persist_directory)
     
-    # 임베딩 함수 설정
-    embedding_function = get_embedding_function(embedding_model)
+    # 임베딩 함수 설정 (L2 정규화 적용)
+    embedding_function = get_normalized_embedding_function(embedding_model)
     
     # 컬렉션 존재 여부 확인
     collections = client.list_collections()
@@ -107,8 +107,8 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     if embedding_model is None:
         embedding_model = "all-MiniLM-L6-v2"  # 기본값
     
-    # 임베딩 함수 설정
-    embedding_function = get_embedding_function(embedding_model)
+    # 임베딩 함수 설정 (L2 정규화 적용)
+    embedding_function = get_normalized_embedding_function(embedding_model)
     
     if collection_exists:
         # 기존 컬렉션 사용
