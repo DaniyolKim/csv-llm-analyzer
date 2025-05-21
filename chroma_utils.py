@@ -41,7 +41,8 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
             client.delete_collection(collection_name)
             collection = client.create_collection(
                 name=collection_name,
-                embedding_function=embedding_function
+                embedding_function=embedding_function,
+                metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
             )
         else:
             # 기존 컬렉션 사용
@@ -49,23 +50,30 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
                 name=collection_name,
                 embedding_function=embedding_function
             )
+            # 기존 컬렉션에 임베딩 모델 메타데이터 업데이트
+            try:
+                collection.metadata = {"embedding_model": embedding_model}
+            except:
+                # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
+                pass
     else:
         # 새 컬렉션 생성
         collection = client.create_collection(
             name=collection_name,
-            embedding_function=embedding_function
+            embedding_function=embedding_function,
+            metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
         )
     
     return client, collection
 
-def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db", embedding_model="all-MiniLM-L6-v2"):
+def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db", embedding_model=None):
     """
     기존 ChromaDB 컬렉션을 로드합니다.
     
     Args:
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
-        embedding_model (str): 임베딩 모델 이름
+        embedding_model (str, optional): 임베딩 모델 이름 (기본값: None, 컬렉션에 저장된 모델 정보를 우선 사용)
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -77,12 +85,30 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     # ChromaDB 클라이언트 생성
     client = chromadb.PersistentClient(path=persist_directory)
     
-    # 임베딩 함수 설정
-    embedding_function = get_embedding_function(embedding_model)
-    
     # 컬렉션 존재 여부 확인
     collections = client.list_collections()
     collection_exists = collection_name in [c.name for c in collections]
+    
+    if collection_exists:
+        # 임시로 임베딩 함수 없이 컬렉션 가져오기 (메타데이터 확인용)
+        try:
+            temp_collection = client.get_collection(name=collection_name)
+            # 컬렉션 메타데이터에서 임베딩 모델 정보 확인
+            if temp_collection.metadata and "embedding_model" in temp_collection.metadata:
+                stored_model = temp_collection.metadata["embedding_model"]
+                print(f"컬렉션에 저장된 임베딩 모델 정보를 찾았습니다: {stored_model}")
+                # 저장된 임베딩 모델 사용
+                embedding_model = stored_model
+        except:
+            # 메타데이터 접근 실패 시 기본 모델 사용
+            print(f"컬렉션 메타데이터 접근 실패, 지정된 임베딩 모델을 사용합니다: {embedding_model}")
+    
+    # 임베딩 모델이 지정되지 않았으면 컬렉션에서 가져오기
+    if embedding_model is None:
+        embedding_model = "all-MiniLM-L6-v2"  # 기본값
+    
+    # 임베딩 함수 설정
+    embedding_function = get_embedding_function(embedding_model)
     
     if collection_exists:
         # 기존 컬렉션 사용
@@ -90,11 +116,19 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
             name=collection_name,
             embedding_function=embedding_function
         )
+        # 임베딩 모델 정보가 없으면 추가
+        if not collection.metadata or "embedding_model" not in collection.metadata:
+            try:
+                collection.metadata = {"embedding_model": embedding_model}
+            except:
+                # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
+                pass
     else:
         # 새 컬렉션 생성
         collection = client.create_collection(
             name=collection_name,
-            embedding_function=embedding_function
+            embedding_function=embedding_function,
+            metadata={"embedding_model": embedding_model}
         )
     
     return client, collection

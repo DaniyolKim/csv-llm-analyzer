@@ -97,23 +97,7 @@ with st.sidebar:
                         st.session_state.collection_to_delete = collection
                         st.session_state.show_delete_confirm = True
         
-        # 임베딩 모델 선택
-        st.write("### 임베딩 모델 선택")
-        embedding_models = get_available_embedding_models()
-        all_models = []
-        for category, models in embedding_models.items():
-            all_models.extend(models)
-        
-        selected_embedding_model = st.selectbox(
-            "임베딩 모델",
-            options=all_models,
-            index=all_models.index(st.session_state.embedding_model) if st.session_state.embedding_model in all_models else 0,
-            help="검색에 사용할 임베딩 모델을 선택하세요. DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다."
-        )
-        
-        # 임베딩 모델 선택 시 세션 상태 업데이트
-        if selected_embedding_model != st.session_state.embedding_model:
-            st.session_state.embedding_model = selected_embedding_model
+
                         
         # 삭제 확인 다이얼로그
         if st.session_state.show_delete_confirm and st.session_state.collection_to_delete:
@@ -152,8 +136,7 @@ with st.sidebar:
             try:
                 client, collection = load_chroma_collection(
                     st.session_state.collection_name, 
-                    chroma_path,
-                    embedding_model=st.session_state.embedding_model
+                    chroma_path
                 )
                 st.session_state.chroma_client = client
                 st.session_state.chroma_collection = collection
@@ -161,6 +144,18 @@ with st.sidebar:
                 
                 # 임베딩 모델 상태 확인
                 embedding_status = get_embedding_status()
+                
+                # 컬렉션에 저장된 임베딩 모델 정보 확인
+                stored_model = None
+                try:
+                    if collection.metadata and "embedding_model" in collection.metadata:
+                        stored_model = collection.metadata["embedding_model"]
+                        # 저장된 모델 정보가 있으면 세션 상태 업데이트
+                        st.session_state.embedding_model = stored_model
+                        st.info(f"컬렉션에 저장된 임베딩 모델 '{stored_model}'을 사용합니다.")
+                except:
+                    pass
+                
                 if embedding_status["fallback_used"]:
                     st.warning(f"""
                     ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.

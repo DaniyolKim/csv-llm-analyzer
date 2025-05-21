@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from chroma_utils import load_chroma_collection, get_available_collections, hybrid_query_chroma
-from embedding_utils import get_available_embedding_models
+
 
 st.set_page_config(
     page_title="DB 검색",
@@ -44,7 +44,7 @@ with st.sidebar:
         )
 
 # 탭 생성
-tab1, tab2 = st.tabs(["컬렉션 데이터", "DB 검색"])
+tab1, tab2 = st.tabs(["컬렉션 데이터", "텍스트 검색"])
 
 # 메인 영역
 if not collections:
@@ -130,32 +130,15 @@ else:
     with tab2:
         # 검색 설정
         with st.expander("검색 설정", expanded=True):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # 임베딩 모델 선택
-                embedding_models = get_available_embedding_models()
-                all_models = []
-                for category, models in embedding_models.items():
-                    all_models.extend(models)
-                
-                selected_model = st.selectbox(
-                    "임베딩 모델",
-                    options=all_models,
-                    index=all_models.index("snunlp/KR-SBERT-V40K-klueNLI-augSTS") if "snunlp/KR-SBERT-V40K-klueNLI-augSTS" in all_models else 0,
-                    help="검색에 사용할 임베딩 모델을 선택하세요. DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다."
-                )
-            
-            with col2:
-                # 검색 결과 수 설정
-                n_results = st.slider(
-                    "검색 결과 수",
-                    min_value=1,
-                    max_value=50,
-                    value=10,
-                    step=1,
-                    help="반환할 검색 결과의 최대 개수를 설정합니다."
-                )
+            # 검색 결과 수 설정
+            n_results = st.slider(
+                "검색 결과 수",
+                min_value=1,
+                max_value=50,
+                value=10,
+                step=1,
+                help="반환할 검색 결과의 최대 개수를 설정합니다."
+            )
         
         if selected_collection:
             # 검색 입력 필드
@@ -168,11 +151,10 @@ else:
             if search_button and query:
                 with st.spinner("검색 중..."):
                     try:
-                        # ChromaDB 컬렉션 로드 (선택한 임베딩 모델 사용)
+                        # ChromaDB 컬렉션 로드 (저장된 임베딩 모델 사용)
                         client, collection = load_chroma_collection(
                             collection_name=selected_collection,
-                            persist_directory=db_path,
-                            embedding_model=selected_model
+                            persist_directory=db_path
                         )
                         
                         # 하이브리드 검색 실행
@@ -242,13 +224,21 @@ else:
                 try:
                     client, collection = load_chroma_collection(
                         collection_name=selected_collection,
-                        persist_directory=db_path,
-                        embedding_model=selected_model
+                        persist_directory=db_path
                     )
                     collection_info = collection.count()
+                    
+                    # 컬렉션에 저장된 임베딩 모델 정보 확인
+                    embedding_model = "알 수 없음"
+                    try:
+                        if collection.metadata and "embedding_model" in collection.metadata:
+                            embedding_model = collection.metadata["embedding_model"]
+                    except:
+                        pass
+                    
                     st.write(f"컬렉션 이름: {selected_collection}")
                     st.write(f"문서 수: {collection_info}")
-                    st.write(f"임베딩 모델: {selected_model}")
+                    st.write(f"임베딩 모델: {embedding_model}")
                     st.write(f"DB 경로: {db_path}")
                 except Exception as e:
                     st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
@@ -287,8 +277,8 @@ with st.expander("사용 방법"):
     
     ### 임베딩 모델
     
-    검색 시 사용하는 임베딩 모델은 DB 저장 시 사용한 모델과 동일해야 정확한 검색 결과를 얻을 수 있습니다.
-    한국어 데이터의 경우 'snunlp/KR-SBERT-V40K-klueNLI-augSTS' 모델을 권장합니다.
+    검색 시 컬렉션에 저장된 임베딩 모델이 자동으로 사용됩니다.
+    컬렉션 정보에서 사용 중인 임베딩 모델을 확인할 수 있습니다.
     
     ### 유사도 점수
     
