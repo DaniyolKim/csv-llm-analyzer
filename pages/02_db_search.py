@@ -10,6 +10,18 @@ st.set_page_config(
     layout="wide"
 )
 
+# 세션 상태 초기화
+if 'chroma_client' not in st.session_state:
+    st.session_state.chroma_client = None
+if 'chroma_collection' not in st.session_state:
+    st.session_state.chroma_collection = None
+if 'collection_loaded' not in st.session_state:
+    st.session_state.collection_loaded = False
+if 'current_collection_name' not in st.session_state:
+    st.session_state.current_collection_name = None
+if 'current_db_path' not in st.session_state:
+    st.session_state.current_db_path = None
+
 st.title("DB 검색")
 
 # 사이드바 설정
@@ -35,6 +47,10 @@ with st.sidebar:
     if not collections:
         st.error(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다.")
         selected_collection = None
+        # 컬렉션이 없으면 세션 상태 초기화
+        st.session_state.collection_loaded = False
+        st.session_state.chroma_client = None
+        st.session_state.chroma_collection = None
     else:
         selected_collection = st.selectbox(
             "컬렉션 선택",
@@ -42,6 +58,54 @@ with st.sidebar:
             index=0 if collections else None,
             help="검색할 ChromaDB 컬렉션을 선택하세요."
         )
+        
+        # 컬렉션이나 경로가 변경되면 세션 상태 업데이트
+        if (selected_collection != st.session_state.current_collection_name or 
+            db_path != st.session_state.current_db_path):
+            st.session_state.collection_loaded = False
+            st.session_state.current_collection_name = selected_collection
+            st.session_state.current_db_path = db_path
+            
+    # 컬렉션 로드 버튼
+    if selected_collection and not st.session_state.collection_loaded:
+        if st.button("컬렉션 로드", key="load_collection_btn"):
+            with st.spinner("컬렉션을 로드하는 중..."):
+                try:
+                    client, collection = load_chroma_collection(
+                        collection_name=selected_collection,
+                        persist_directory=db_path
+                    )
+                    st.session_state.chroma_client = client
+                    st.session_state.chroma_collection = collection
+                    st.session_state.collection_loaded = True
+                    st.success(f"컬렉션 '{selected_collection}'을 성공적으로 로드했습니다.")
+                except Exception as e:
+                    st.error(f"컬렉션 로드 중 오류 발생: {e}")
+    
+    # 컬렉션이 로드된 경우 상태 표시
+    if st.session_state.collection_loaded:
+        # 컬렉션 정보 표시
+        with st.expander("컬렉션 정보"):
+            try:
+                # 이미 로드된 컬렉션 사용
+                collection = st.session_state.chroma_collection
+                collection_info = collection.count()
+                
+                # 컬렉션에 저장된 임베딩 모델 정보 확인
+                embedding_model = "알 수 없음"
+                try:
+                    if collection.metadata and "embedding_model" in collection.metadata:
+                        embedding_model = collection.metadata["embedding_model"]
+                except:
+                    pass
+                
+                st.write(f"컬렉션 이름: {selected_collection}")
+                st.write(f"문서 수: {collection_info}")
+                st.write(f"임베딩 모델: {embedding_model}")
+                st.write(f"DB 경로: {db_path}")
+            except Exception as e:
+                st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
+        # st.success(f"✅ 컬렉션 '{selected_collection}'이 로드되었습니다.")
 
 # 탭 생성
 tab1, tab2 = st.tabs(["컬렉션 데이터", "텍스트 검색"])
@@ -52,20 +116,22 @@ if not collections:
         with tab:
             st.warning(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다. 먼저 CSV 파일을 업로드하고 DB에 저장해주세요.")
 else:
-    # 탭 1: 컬렉션 데이터 표시
-    with tab1:
-        if selected_collection:
+    # 컬렉션이 로드되지 않은 경우 안내 메시지
+    if not st.session_state.collection_loaded:
+        for tab in [tab1, tab2]:
+            with tab:
+                st.info("사이드바에서 컬렉션을 로드하세요.")
+    else:
+        # 탭 1: 컬렉션 데이터 표시
+        with tab1:
             st.subheader(f"컬렉션: {selected_collection}")
             
             # 데이터 로드 버튼
-            if st.button("데이터 로드", key="load_data_btn"):
-                with st.spinner("데이터를 로드하는 중..."):
+            if st.button("데이터 표시", key="show_data_btn"):
+                with st.spinner("데이터를 가져오는 중..."):
                     try:
-                        # 기본 임베딩 모델로 컬렉션 로드
-                        client, collection = load_chroma_collection(
-                            collection_name=selected_collection,
-                            persist_directory=db_path
-                        )
+                        # 이미 로드된 컬렉션 사용
+                        collection = st.session_state.chroma_collection
                         
                         # 컬렉션의 모든 데이터 가져오기
                         all_data = collection.get()
@@ -123,24 +189,21 @@ else:
                     
                     except Exception as e:
                         st.error(f"데이터 로드 중 오류가 발생했습니다: {str(e)}")
-        else:
-            st.info("사이드바에서 컬렉션을 선택하세요.")
-    
-    # 탭 2: DB 검색
-    with tab2:
-        # 검색 설정
-        with st.expander("검색 설정", expanded=True):
-            # 검색 결과 수 설정
-            n_results = st.slider(
-                "검색 결과 수",
-                min_value=1,
-                max_value=50,
-                value=10,
-                step=1,
-                help="반환할 검색 결과의 최대 개수를 설정합니다."
-            )
         
-        if selected_collection:
+        # 탭 2: DB 검색
+        with tab2:
+            # 검색 설정
+            with st.expander("검색 설정", expanded=True):
+                # 검색 결과 수 설정
+                n_results = st.slider(
+                    "검색 결과 수",
+                    min_value=1,
+                    max_value=50,
+                    value=10,
+                    step=1,
+                    help="반환할 검색 결과의 최대 개수를 설정합니다."
+                )
+            
             # 검색 입력 필드
             query = st.text_input("검색어를 입력하세요", key="search_query")
             
@@ -151,11 +214,8 @@ else:
             if search_button and query:
                 with st.spinner("검색 중..."):
                     try:
-                        # ChromaDB 컬렉션 로드 (저장된 임베딩 모델 사용)
-                        client, collection = load_chroma_collection(
-                            collection_name=selected_collection,
-                            persist_directory=db_path
-                        )
+                        # 이미 로드된 컬렉션 사용
+                        collection = st.session_state.chroma_collection
                         
                         # 하이브리드 검색 실행
                         results = hybrid_query_chroma(collection, query, n_results=n_results)
@@ -218,32 +278,6 @@ else:
                     
                     except Exception as e:
                         st.error(f"검색 중 오류가 발생했습니다: {str(e)}")
-            
-            # 컬렉션 정보 표시
-            with st.expander("컬렉션 정보"):
-                try:
-                    client, collection = load_chroma_collection(
-                        collection_name=selected_collection,
-                        persist_directory=db_path
-                    )
-                    collection_info = collection.count()
-                    
-                    # 컬렉션에 저장된 임베딩 모델 정보 확인
-                    embedding_model = "알 수 없음"
-                    try:
-                        if collection.metadata and "embedding_model" in collection.metadata:
-                            embedding_model = collection.metadata["embedding_model"]
-                    except:
-                        pass
-                    
-                    st.write(f"컬렉션 이름: {selected_collection}")
-                    st.write(f"문서 수: {collection_info}")
-                    st.write(f"임베딩 모델: {embedding_model}")
-                    st.write(f"DB 경로: {db_path}")
-                except Exception as e:
-                    st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
-        else:
-            st.info("사이드바에서 컬렉션을 선택하세요.")
 
 # 도움말 섹션
 with st.expander("사용 방법"):
@@ -253,16 +287,16 @@ with st.expander("사용 방법"):
     #### 공통 설정
     1. 사이드바에서 ChromaDB 경로를 입력합니다. (기본값: './chroma_db')
     2. 검색할 컬렉션을 선택합니다.
+    3. '컬렉션 로드' 버튼을 클릭하여 컬렉션을 메모리에 로드합니다.
     
     #### 컬렉션 데이터 탭
-    - '데이터 로드' 버튼을 클릭하여 선택한 컬렉션의 모든 데이터를 확인할 수 있습니다.
+    - '데이터 표시' 버튼을 클릭하여 선택한 컬렉션의 모든 데이터를 확인할 수 있습니다.
     - 데이터 통계를 통해 출처별 문서 수를 확인할 수 있습니다.
     
     #### DB 검색 탭
-    1. 임베딩 모델을 선택합니다. (DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다)
-    2. 검색 결과 수를 조정합니다.
-    3. 검색어를 입력하고 '검색' 버튼을 클릭합니다.
-    4. 검색 결과는 유사도가 높은 순으로 정렬됩니다.
+    1. 검색 결과 수를 조정합니다.
+    2. 검색어를 입력하고 '검색' 버튼을 클릭합니다.
+    3. 검색 결과는 유사도가 높은 순으로 정렬됩니다.
     
     ### 하이브리드 검색
     
