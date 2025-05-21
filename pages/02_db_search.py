@@ -1,4 +1,8 @@
 import streamlit as st
+import pandas as pd
+import os
+from chroma_utils import load_chroma_collection, get_available_collections, query_chroma
+from embedding_utils import get_available_embedding_models
 
 st.set_page_config(
     page_title="DB 검색",
@@ -8,4 +12,272 @@ st.set_page_config(
 
 st.title("DB 검색")
 
-st.info("이 기능은 아직 개발 중입니다. 나중에 구현될 예정입니다.")
+# 사이드바 설정
+with st.sidebar:
+    st.header("DB 설정")
+    
+    # ChromaDB 경로 설정
+    default_db_path = "./chroma_db"
+    db_path = st.text_input(
+        "ChromaDB 경로",
+        value=default_db_path,
+        help="ChromaDB가 저장된 경로를 입력하세요. 기본값은 './chroma_db'입니다."
+    )
+    
+    # 경로가 존재하는지 확인
+    if not os.path.exists(db_path):
+        st.warning(f"입력한 경로({db_path})가 존재하지 않습니다. 기본 경로를 사용합니다.")
+        db_path = default_db_path
+    
+    # 사용 가능한 컬렉션 목록 가져오기
+    collections = get_available_collections(persist_directory=db_path)
+    
+    if not collections:
+        st.error(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다.")
+        selected_collection = None
+    else:
+        selected_collection = st.selectbox(
+            "컬렉션 선택",
+            options=collections,
+            index=0 if collections else None,
+            help="검색할 ChromaDB 컬렉션을 선택하세요."
+        )
+
+# 탭 생성
+tab1, tab2 = st.tabs(["컬렉션 데이터", "DB 검색"])
+
+# 메인 영역
+if not collections:
+    for tab in [tab1, tab2]:
+        with tab:
+            st.warning(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다. 먼저 CSV 파일을 업로드하고 DB에 저장해주세요.")
+else:
+    # 탭 1: 컬렉션 데이터 표시
+    with tab1:
+        if selected_collection:
+            st.subheader(f"컬렉션: {selected_collection}")
+            
+            # 데이터 로드 버튼
+            if st.button("데이터 로드", key="load_data_btn"):
+                with st.spinner("데이터를 로드하는 중..."):
+                    try:
+                        # 기본 임베딩 모델로 컬렉션 로드
+                        client, collection = load_chroma_collection(
+                            collection_name=selected_collection,
+                            persist_directory=db_path
+                        )
+                        
+                        # 컬렉션의 모든 데이터 가져오기
+                        all_data = collection.get()
+                        
+                        if all_data and all_data["documents"]:
+                            # 결과 표시
+                            st.success(f"총 {len(all_data['documents'])}개의 문서를 로드했습니다.")
+                            
+                            # 결과를 데이터프레임으로 변환
+                            result_data = []
+                            for i, (doc, metadata, id) in enumerate(zip(
+                                all_data["documents"], 
+                                all_data["metadatas"],
+                                all_data["ids"]
+                            )):
+                                result_data.append({
+                                    "ID": id,
+                                    "출처": metadata.get("source", "알 수 없음"),
+                                    "청크": metadata.get("chunk", "알 수 없음"),
+                                    "내용": doc
+                                })
+                            
+                            # 데이터프레임 생성 및 표시
+                            result_df = pd.DataFrame(result_data)
+                            st.dataframe(
+                                result_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "ID": st.column_config.TextColumn(width="medium"),
+                                    "출처": st.column_config.TextColumn(width="small"),
+                                    "청크": st.column_config.NumberColumn(width="small"),
+                                    "내용": st.column_config.TextColumn(width="large")
+                                }
+                            )
+                            
+                            # 데이터 통계
+                            st.subheader("데이터 통계")
+                            st.write(f"총 문서 수: {len(all_data['documents'])}")
+                            
+                            # 출처별 문서 수 계산
+                            source_counts = {}
+                            for metadata in all_data["metadatas"]:
+                                source = metadata.get("source", "알 수 없음")
+                                source_counts[source] = source_counts.get(source, 0) + 1
+                            
+                            # 출처별 문서 수 차트
+                            source_df = pd.DataFrame({
+                                "출처": list(source_counts.keys()),
+                                "문서 수": list(source_counts.values())
+                            })
+                            st.bar_chart(source_df.set_index("출처"))
+                        else:
+                            st.info("컬렉션에 데이터가 없습니다.")
+                    
+                    except Exception as e:
+                        st.error(f"데이터 로드 중 오류가 발생했습니다: {str(e)}")
+        else:
+            st.info("사이드바에서 컬렉션을 선택하세요.")
+    
+    # 탭 2: DB 검색
+    with tab2:
+        # 검색 설정
+        with st.expander("검색 설정", expanded=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # 임베딩 모델 선택
+                embedding_models = get_available_embedding_models()
+                all_models = []
+                for category, models in embedding_models.items():
+                    all_models.extend(models)
+                
+                selected_model = st.selectbox(
+                    "임베딩 모델",
+                    options=all_models,
+                    index=all_models.index("snunlp/KR-SBERT-V40K-klueNLI-augSTS") if "snunlp/KR-SBERT-V40K-klueNLI-augSTS" in all_models else 0,
+                    help="검색에 사용할 임베딩 모델을 선택하세요. DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다."
+                )
+            
+            with col2:
+                # 검색 결과 수 설정
+                n_results = st.slider(
+                    "검색 결과 수",
+                    min_value=1,
+                    max_value=50,
+                    value=10,
+                    step=1,
+                    help="반환할 검색 결과의 최대 개수를 설정합니다."
+                )
+        
+        if selected_collection:
+            # 검색 입력 필드
+            query = st.text_input("검색어를 입력하세요", key="search_query")
+            
+            # 검색 버튼
+            search_button = st.button("검색", type="primary")
+            
+            # 검색 실행
+            if search_button and query:
+                with st.spinner("검색 중..."):
+                    try:
+                        # ChromaDB 컬렉션 로드 (선택한 임베딩 모델 사용)
+                        client, collection = load_chroma_collection(
+                            collection_name=selected_collection,
+                            persist_directory=db_path,
+                            embedding_model=selected_model
+                        )
+                        
+                        # 쿼리 실행
+                        results = query_chroma(collection, query, n_results=n_results)
+                        
+                        if results and results["documents"] and results["documents"][0]:
+                            # 결과 표시
+                            st.subheader(f"검색 결과: {len(results['documents'][0])}개")
+                            
+                            # 결과를 데이터프레임으로 변환
+                            result_data = []
+                            for i, (doc, metadata, distance) in enumerate(zip(
+                                results["documents"][0], 
+                                results["metadatas"][0], 
+                                results["distances"][0]
+                            )):
+                                # 유사도 점수 계산 (거리를 유사도로 변환)
+                                similarity = 1 - distance
+                                
+                                # 임계값 필터링 제거 - 모든 결과 표시
+                                result_data.append({
+                                    "순위": i + 1,
+                                    "유사도": f"{similarity:.4f}",
+                                    "출처": metadata.get("source", "알 수 없음"),
+                                    "청크": metadata.get("chunk", "알 수 없음"),
+                                    "내용": doc
+                                })
+                            
+                            # 데이터프레임 생성 및 표시
+                            result_df = pd.DataFrame(result_data)
+                            st.dataframe(
+                                result_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "순위": st.column_config.NumberColumn(width="small"),
+                                    "유사도": st.column_config.TextColumn(width="small"),
+                                    "출처": st.column_config.TextColumn(width="small"),
+                                    "청크": st.column_config.NumberColumn(width="small"),
+                                    "내용": st.column_config.TextColumn(width="large")
+                                }
+                            )
+                            
+                            # 시각화: 유사도 차트
+                            if len(result_data) > 1:
+                                st.subheader("유사도 분포")
+                                chart_data = pd.DataFrame({
+                                    "순위": [item["순위"] for item in result_data],
+                                    "유사도": [float(item["유사도"]) for item in result_data]
+                                })
+                                st.bar_chart(chart_data.set_index("순위"))
+                        else:
+                            st.info("검색 결과가 없습니다.")
+                    
+                    except Exception as e:
+                        st.error(f"검색 중 오류가 발생했습니다: {str(e)}")
+            
+            # 컬렉션 정보 표시
+            with st.expander("컬렉션 정보"):
+                try:
+                    client, collection = load_chroma_collection(
+                        collection_name=selected_collection,
+                        persist_directory=db_path,
+                        embedding_model=selected_model
+                    )
+                    collection_info = collection.count()
+                    st.write(f"컬렉션 이름: {selected_collection}")
+                    st.write(f"문서 수: {collection_info}")
+                    st.write(f"임베딩 모델: {selected_model}")
+                    st.write(f"DB 경로: {db_path}")
+                except Exception as e:
+                    st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
+        else:
+            st.info("사이드바에서 컬렉션을 선택하세요.")
+
+# 도움말 섹션
+with st.expander("사용 방법"):
+    st.markdown("""
+    ### DB 검색 사용 방법
+    
+    #### 공통 설정
+    1. 사이드바에서 ChromaDB 경로를 입력합니다. (기본값: './chroma_db')
+    2. 검색할 컬렉션을 선택합니다.
+    
+    #### 컬렉션 데이터 탭
+    - '데이터 로드' 버튼을 클릭하여 선택한 컬렉션의 모든 데이터를 확인할 수 있습니다.
+    - 데이터 통계를 통해 출처별 문서 수를 확인할 수 있습니다.
+    
+    #### DB 검색 탭
+    1. 임베딩 모델을 선택합니다. (DB 저장 시 사용한 모델과 동일한 모델을 선택하는 것이 좋습니다)
+    2. 검색 결과 수를 조정합니다.
+    3. 검색어를 입력하고 '검색' 버튼을 클릭합니다.
+    4. 검색 결과는 유사도가 높은 순으로 정렬됩니다.
+    
+    ### ChromaDB 경로
+    
+    다른 폴더에 저장된 ChromaDB를 검색하려면 해당 경로를 입력하세요.
+    상대 경로(예: './chroma_db') 또는 절대 경로(예: 'C:/Users/username/chroma_db')를 사용할 수 있습니다.
+    
+    ### 임베딩 모델
+    
+    검색 시 사용하는 임베딩 모델은 DB 저장 시 사용한 모델과 동일해야 정확한 검색 결과를 얻을 수 있습니다.
+    한국어 데이터의 경우 'snunlp/KR-SBERT-V40K-klueNLI-augSTS' 모델을 권장합니다.
+    
+    ### 유사도 점수
+    
+    유사도 점수는 0에서 1 사이의 값으로, 1에 가까울수록 검색어와 유사한 내용입니다.
+    """)
