@@ -66,14 +66,13 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
     
     return client, collection
 
-def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db", embedding_model=None):
+def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db"):
     """
     기존 ChromaDB 컬렉션을 로드합니다.
     
     Args:
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
-        embedding_model (str, optional): 임베딩 모델 이름 (기본값: None, 컬렉션에 저장된 모델 정보를 우선 사용)
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -88,7 +87,7 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     # 컬렉션 존재 여부 확인
     collections = client.list_collections()
     collection_exists = collection_name in [c.name for c in collections]
-    
+    embedding_model = "all-MiniLM-L6-v2"  # 기본값
     if collection_exists:
         # 임시로 임베딩 함수 없이 컬렉션 가져오기 (메타데이터 확인용)
         try:

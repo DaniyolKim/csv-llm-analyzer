@@ -44,8 +44,6 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'current_question' not in st.session_state:
     st.session_state.current_question = ""
-if 'embedding_model' not in st.session_state:
-    st.session_state.embedding_model = "snunlp/KR-SBERT-V40K-klueNLI-augSTS"
 
 # 제목
 st.title("Custom RAG")
@@ -136,8 +134,7 @@ with st.sidebar:
             try:
                 client, collection = load_chroma_collection(
                     st.session_state.collection_name, 
-                    chroma_path,
-                    embedding_model=st.session_state.embedding_model
+                    chroma_path
                 )
                 st.session_state.chroma_client = client
                 st.session_state.chroma_collection = collection

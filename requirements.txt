@@ -6,3 +6,6 @@ requests
 ollama
 kss
 sentence-transformers
+umap-learn
+plotly
+scikit-learn

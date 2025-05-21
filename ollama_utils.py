@@ -158,7 +158,6 @@ def chat_with_ollama(messages, model_name="llama2"):
         traceback.print_exc()
         return f"Ollama 오류: {e}"
 
-
 def get_ollama_install_guide():
     """
     Ollama 설치 가이드를 반환합니다.

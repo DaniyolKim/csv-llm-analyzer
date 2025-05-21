@@ -2,31 +2,8 @@ import os
 import argparse
 import chromadb
 import ollama
+from chroma_utils import load_chroma_collection
 from utils import clean_text
-
-def load_chroma_collection(persist_directory="./chroma_db", collection_name="csv_test"):
-    """
-    저장된 ChromaDB 컬렉션을 로드합니다.
-    
-    Args:
-        persist_directory (str): 데이터베이스 저장 경로
-        collection_name (str): 컬렉션 이름
-        
-    Returns:
-        chromadb.Collection: ChromaDB 컬렉션
-    """
-    if not os.path.exists(persist_directory):
-        raise FileNotFoundError(f"ChromaDB를 찾을 수 없습니다: {persist_directory}")
-    
-    # ChromaDB 클라이언트 생성
-    client = chromadb.PersistentClient(path=persist_directory)
-    
-    # 컬렉션 로드
-    try:
-        collection = client.get_collection(collection_name)
-        return collection
-    except Exception as e:
-        raise ValueError(f"컬렉션을 로드할 수 없습니다: {e}")
 
 def get_ollama_models():
     """
