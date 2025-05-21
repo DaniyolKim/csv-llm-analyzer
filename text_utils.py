@@ -17,8 +17,8 @@ def clean_text(text):
     if not isinstance(text, str):
         return str(text)
     
-    # URL 패턴 제거 (http://, https://, www. 로 시작하는 주소)
-    cleaned_text = re.sub(r'https?://\S+|www\.\S+', ' ', text)
+    # URL 패턴 제거 (http://, https://, www. 로 시작하는 전체 URL)
+    cleaned_text = re.sub(r'(https?:\/\/|www\.)[^\s\"\'\(\)\[\]<>]+', ' ', text)
     
     # ', 조합과 '] 조합을 .로 변환
     cleaned_text = re.sub(r"',", ".", cleaned_text)
