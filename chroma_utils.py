@@ -88,6 +88,7 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     collections = client.list_collections()
     collection_exists = collection_name in [c.name for c in collections]
     embedding_model = "all-MiniLM-L6-v2"  # 기본값
+    
     if collection_exists:
         # 임시로 임베딩 함수 없이 컬렉션 가져오기 (메타데이터 확인용)
         try:
@@ -98,9 +99,9 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
                 print(f"컬렉션에 저장된 임베딩 모델 정보를 찾았습니다: {stored_model}")
                 # 저장된 임베딩 모델 사용
                 embedding_model = stored_model
-        except:
+        except Exception as e:
             # 메타데이터 접근 실패 시 기본 모델 사용
-            print(f"컬렉션 메타데이터 접근 실패, 지정된 임베딩 모델을 사용합니다: {embedding_model}")
+            print(f"컬렉션 메타데이터 접근 실패: {str(e)}, 기본 임베딩 모델을 사용합니다: {embedding_model}")
     
     # 임베딩 모델이 지정되지 않았으면 컬렉션에서 가져오기
     if embedding_model is None:
@@ -111,17 +112,22 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     
     if collection_exists:
         # 기존 컬렉션 사용
-        collection = client.get_collection(
-            name=collection_name,
-            embedding_function=embedding_function
-        )
-        # 임베딩 모델 정보가 없으면 추가
-        if not collection.metadata or "embedding_model" not in collection.metadata:
-            try:
-                collection.metadata = {"embedding_model": embedding_model}
-            except:
-                # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
-                pass
+        try:
+            collection = client.get_collection(
+                name=collection_name,
+                embedding_function=embedding_function
+            )
+            # 임베딩 모델 정보가 없으면 추가
+            if not collection.metadata or "embedding_model" not in collection.metadata:
+                try:
+                    collection.metadata = {"embedding_model": embedding_model}
+                except:
+                    # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
+                    pass
+        except Exception as e:
+            print(f"임베딩 함수로 컬렉션 로드 실패: {str(e)}, 임베딩 함수 없이 로드를 시도합니다.")
+            # 임베딩 함수 없이 컬렉션 로드 시도
+            collection = client.get_collection(name=collection_name)
     else:
         # 새 컬렉션 생성
         collection = client.create_collection(
@@ -186,6 +192,10 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     
     # ChromaDB 생성 또는 로드 (임베딩 모델 지정)
     client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append, embedding_model=embedding_model)
+    
+    # 임베딩 함수가 제대로 설정되었는지 확인
+    if not hasattr(collection, "_embedding_function") or collection._embedding_function is None:
+        print("경고: 컬렉션에 임베딩 함수가 설정되지 않았습니다. 시각화 기능이 작동하지 않을 수 있습니다.")
     
     # 배치 처리를 위한 변수 초기화
     batch_documents = []
