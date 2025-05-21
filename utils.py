@@ -39,5 +39,6 @@ from ollama_utils import (
 # RAG 시스템 관련 함수
 from rag_utils import (
     rag_query_with_ollama,
-    rag_query_with_metadata_filter
+    rag_query_with_metadata_filter,
+    rag_chat_with_ollama
 )

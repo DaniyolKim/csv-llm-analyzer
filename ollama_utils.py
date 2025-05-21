@@ -123,6 +123,42 @@ def query_ollama(prompt, model_name="llama2"):
         traceback.print_exc()
         return f"Ollama 오류: {e}"
 
+def chat_with_ollama(messages, model_name="llama2"):
+    """
+    Ollama 모델과 역할 기반 대화를 수행합니다.
+    
+    Args:
+        messages (list): 대화 메시지 목록. 각 메시지는 {'role': 'system|user|assistant', 'content': '내용'} 형식
+        model_name (str): Ollama 모델 이름
+        
+    Returns:
+        str: 모델 응답
+    """
+    try:
+        import ollama
+        
+        # Ollama 라이브러리의 chat 함수 사용
+        response = ollama.chat(model=model_name, messages=messages)
+        
+        # 응답 구조 확인
+        if isinstance(response, dict) and 'message' in response:
+            # 이전 API 구조: 딕셔너리 형태
+            return response['message']['content']
+        elif hasattr(response, 'message') and hasattr(response.message, 'content'):
+            # 새로운 API 구조: 객체 형태
+            return response.message.content
+        else:
+            # 다른 구조인 경우
+            print("예상치 못한 응답 구조:", response)
+            return str(response)
+    except ImportError:
+        return "ollama 패키지가 설치되어 있지 않습니다. 'pip install ollama'를 실행하세요."
+    except Exception as e:
+        print(f"Ollama 대화 중 오류 발생: {e}")
+        traceback.print_exc()
+        return f"Ollama 오류: {e}"
+
+
 def get_ollama_install_guide():
     """
     Ollama 설치 가이드를 반환합니다.

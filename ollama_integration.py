@@ -28,27 +28,6 @@ def load_chroma_collection(persist_directory="./chroma_db", collection_name="csv
     except Exception as e:
         raise ValueError(f"컬렉션을 로드할 수 없습니다: {e}")
 
-def query_ollama(prompt, model_name="llama2"):
-    """
-    Ollama 라이브러리를 사용하여 모델에 질의합니다.
-    
-    Args:
-        prompt (str): 프롬프트
-        model_name (str): Ollama 모델 이름
-        
-    Returns:
-        str: 모델 응답
-    """
-    try:
-        # Ollama 라이브러리 사용
-        response = ollama.generate(model=model_name, prompt=prompt)
-        return response['response']
-    
-    except ImportError:
-        return "ollama 패키지가 설치되어 있지 않습니다. 'pip install ollama'를 실행하세요."
-    except Exception as e:
-        return f"Ollama 라이브러리 오류: {e}"
-
 def get_ollama_models():
     """
     Ollama 라이브러리를 사용하여 설치된 모델 목록을 가져옵니다.

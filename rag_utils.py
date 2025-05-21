@@ -2,7 +2,7 @@
 RAG(Retrieval-Augmented Generation) 시스템 관련 유틸리티 함수 모음
 """
 from text_utils import clean_text
-from ollama_utils import query_ollama
+from ollama_utils import query_ollama, chat_with_ollama
 from chroma_utils import hybrid_query_chroma
 
 def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, similarity_threshold=None):
@@ -113,6 +113,109 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
         "distances": filtered_distances,
         "search_types": filtered_search_types if filtered_search_types else [],
         "response": response
+    }
+
+def rag_chat_with_ollama(collection, query, model_name="llama2", n_results=5, 
+                          similarity_threshold=None, system_prompt=None, chat_history=None):
+    """
+    역할 기반 대화를 지원하는 RAG 시스템에 질의합니다.
+    
+    Args:
+        collection (chromadb.Collection): ChromaDB 컬렉션
+        query (str): 사용자 질의 텍스트
+        model_name (str): Ollama 모델 이름
+        n_results (int): 검색할 결과 수
+        similarity_threshold (float, optional): 유사도 임계값 (0~1 사이)
+        system_prompt (str, optional): 시스템 프롬프트
+        chat_history (list, optional): 이전 대화 기록 [{'role': 'user|assistant', 'content': '내용'}, ...]
+        
+    Returns:
+        dict: 질의 결과
+    """
+    # 쿼리 텍스트 정제
+    cleaned_query = clean_text(query)
+    
+    # n_results 처리
+    if n_results == 0:
+        n_results = 20  # 일반적인 최대값
+    elif n_results is None:
+        n_results = 5
+    elif n_results < 3:
+        n_results = 3
+    elif n_results > 20:
+        n_results = 20
+    
+    # 하이브리드 검색 사용 (임베딩 + 키워드 검색)
+    results = hybrid_query_chroma(collection, cleaned_query, n_results=n_results)
+    
+    # 유사도 임계값이 설정된 경우 필터링 적용
+    filtered_docs = []
+    filtered_metadatas = []
+    filtered_distances = []
+    
+    if similarity_threshold is not None and 0 <= similarity_threshold <= 1:
+        for i, (doc, metadata, distance) in enumerate(zip(
+            results["documents"][0], 
+            results["metadatas"][0], 
+            results["distances"][0]
+        )):
+            # ChromaDB의 distance는 거리 개념이므로 1에서 빼서 유사도로 변환
+            similarity = 1 - distance
+            if similarity >= similarity_threshold:
+                filtered_docs.append(doc)
+                filtered_metadatas.append(metadata)
+                filtered_distances.append(distance)
+    else:
+        # 임계값이 없으면 모든 결과 사용
+        filtered_docs = results["documents"][0]
+        filtered_metadatas = results["metadatas"][0]
+        filtered_distances = results["distances"][0]
+    
+    # 필터링 후 문서가 없는 경우 처리
+    if not filtered_docs:
+        return {
+            "query": query,
+            "context": [],
+            "metadatas": [],
+            "distances": [],
+            "response": f"유사도 임계값({similarity_threshold})을 충족하는 문서를 찾을 수 없습니다."
+        }
+    
+    # 검색 결과를 컨텍스트로 사용
+    context = "\n\n".join([f"문서 {i+1}:\n{doc}" for i, doc in enumerate(filtered_docs)])
+    
+    # 메시지 구성
+    messages = []
+    
+    # 시스템 프롬프트 추가
+    if system_prompt:
+        system_content = system_prompt
+    else:
+        system_content = f"""다음 정보를 바탕으로 질문에 답변해주세요. 제공된 정보에 없는 내용은 답변하지 마세요.
+정보에 답이 없다면 "제공된 정보에서 답을 찾을 수 없습니다"라고 솔직하게 답변하세요.
+
+참조 정보:
+{context}"""
+    
+    messages.append({"role": "system", "content": system_content})
+    
+    # 이전 대화 기록 추가
+    if chat_history:
+        messages.extend(chat_history)
+    
+    # 현재 질문 추가
+    messages.append({"role": "user", "content": query})
+    
+    # 역할 기반 대화 실행
+    response = chat_with_ollama(messages, model_name)
+    
+    return {
+        "query": query,
+        "context": filtered_docs,
+        "metadatas": filtered_metadatas,
+        "distances": filtered_distances,
+        "response": response,
+        "messages": messages
     }
 
 def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_results=5, 

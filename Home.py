@@ -6,7 +6,7 @@ from utils import (
     is_ollama_lib_available,
     get_ollama_models,
     get_ollama_install_guide,
-    rag_query_with_ollama,
+    rag_chat_with_ollama,
     get_available_collections,
     load_chroma_collection,
     delete_collection,
@@ -136,7 +136,8 @@ with st.sidebar:
             try:
                 client, collection = load_chroma_collection(
                     st.session_state.collection_name, 
-                    chroma_path
+                    chroma_path,
+                    embedding_model=st.session_state.embedding_model
                 )
                 st.session_state.chroma_client = client
                 st.session_state.chroma_collection = collection
@@ -468,11 +469,21 @@ if st.session_state.rag_enabled:
                     actual_n_results = n_results
                     
                     # RAG 쿼리 실행
-                    result = rag_query_with_ollama(
+                    result = rag_chat_with_ollama(
                         st.session_state.chroma_collection,
                         combined_query,
                         selected_model,
                         actual_n_results
+                    )
+                    # RAG 쿼리 실행
+                    chat_history = [msg for msg in st.session_state.chat_history if msg["role"] in ["user", "assistant"]]
+                    result = rag_chat_with_ollama(
+                        collection=st.session_state.chroma_collection,
+                        query=current_question,  # combined_query 대신 current_question 사용
+                        model_name=selected_model,
+                        n_results=actual_n_results,
+                        system_prompt=prompt if prompt else None,  # 시스템 프롬프트 전달
+                        chat_history=chat_history  # 이전 대화 기록 전달
                     )
                     
                     # 채팅 기록에 응답 추가
