@@ -7,7 +7,12 @@ import plotly.express as px
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
 from chroma_utils import load_chroma_collection, get_available_collections, hybrid_query_chroma
-
+# WordCloud 추가
+from wordcloud import WordCloud
+from konlpy.tag import Okt
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import random # 무작위 선택을 위해 추가
 
 st.set_page_config(
     page_title="DB 검색",
@@ -26,6 +31,20 @@ if 'current_collection_name' not in st.session_state:
     st.session_state.current_collection_name = None
 if 'current_db_path' not in st.session_state:
     st.session_state.current_db_path = None
+
+# 한국어 불용어 리스트 (예시, 필요에 따라 추가/수정)
+KOREAN_STOPWORDS = [
+    '이', '있', '하', '것', '들', '그', '되', '수', '이', '보', '않', '없', '나', '사람', '주', '아니', '등', '같', '우리',
+    '때', '년', '가', '한', '지', '대하', '오', '말', '일', '그렇', '위하', '때문', '그것', '두', '말하', '알', '그러나',
+    '받', '못하', '일', '그런', '또', '문제', '더', '많', '그리고', '좋', '크', '따르', '중', '나오', '가지', '씨', '시키',
+    '만들', '지금', '생각하', '그러', '속', '하나', '집', '살', '모르', '적', '월', '데', '자신', '안', '어떤', '내', '경우',
+    '명', '생각', '시간', '그녀', '다시', '이런', '앞', '보이', '번', '다른', '어떻', '여자', '남자', '개', '정도', '좀',
+    '원', '잘', '통하', '소리', '놓', '부분', '그냥', '정말', '지금', '오늘', '어제', '내일', '여기', '저기', '거기',
+    '매우', '아주', '너무', '정말', '진짜', '완전', '같은', '다른', '모든', '여러', '몇', '사실', '경우', '내용', '부분',
+    '결과', '자료', '정보', '데이터', '분석', '처리', '기능', '구현', '요청', '확인', '문서', '텍스트', '단어', '추가',
+    '사용', '선택', '입력', '출력', '표시', '생성', '제거', '포함', '위치', '사이', '기반', '형태', '위주', '다음', '파일',
+    '페이지', '항목', '항상', '보통', '자주', '가끔', '거의', '매일', '매주', '매년', '통해', '위해', '대한', '관련', '따라'
+]
 
 st.title("DB 검색")
 
@@ -326,11 +345,20 @@ else:
                 
                 # 최대 문서 수 제한 적용
                 if total_docs > max_docs:
-                    st.info(f"문서가 너무 많아 처음 {max_docs}개만 시각화합니다.")
-                    documents = all_data["documents"][:max_docs]
-                    metadatas = all_data["metadatas"][:max_docs]
-                    ids = all_data["ids"][:max_docs]
+                    st.info(f"문서가 너무 많아 무작위로 {max_docs}개를 선택하여 시각화합니다.")
+                    # 무작위 인덱스 선택
+                    random_indices = random.sample(range(total_docs), max_docs)
                     
+                    # 선택된 인덱스를 사용하여 데이터 추출
+                    documents = [all_data["documents"][i] for i in random_indices]
+                    metadatas = [all_data["metadatas"][i] for i in random_indices]
+                    ids = [all_data["ids"][i] for i in random_indices]
+
+                    # documents = all_data["documents"][:max_docs] # 이전 방식
+                    # metadatas = all_data["metadatas"][:max_docs] # 이전 방식
+                    # ids = all_data["ids"][:max_docs] # 이전 방식
+
+
                     # 제한된 ID로 임베딩 가져오기
                     try:
                         embeddings_result = collection.get(
@@ -404,7 +432,7 @@ else:
                 
                 # K-means 클러스터링
                 st.text("클러스터링 중...")
-                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
                 clusters = kmeans.fit_predict(embeddings_array)
                 
                 # 데이터프레임 생성
@@ -413,7 +441,8 @@ else:
                     'y': embeddings_2d[:, 1],
                     'cluster': clusters,
                     'id': ids,
-                    'text': [doc[:100] + "..." if len(doc) > 100 else doc for doc in documents]
+                    'text': [doc[:100] + "..." if len(doc) > 100 else doc for doc in documents], # 요약 텍스트 (hover용)
+                    'full_text': documents # 원본 텍스트 (WordCloud 및 상세 내용 표시용)
                 })
                 
                 # 출처 정보 추가
@@ -421,6 +450,92 @@ else:
                 
                 return viz_data
             
+            # WordCloud 생성 함수
+            # @st.cache_data(show_spinner=False) # 결과 캐싱하여 반복 생성 방지
+            def generate_wordcloud_for_cluster(_texts, _stopwords, _collection_name_for_cache, _cluster_id_for_cache): # 캐시 키에 클러스터 ID 추가
+                from text_utils import clean_text # 여기서 import 해야 캐싱에 문제 없음
+                okt = Okt()
+                nouns = []
+                for text_content in _texts:
+                    cleaned_text_for_nouns = clean_text(str(text_content)) # str()로 명시적 변환
+                    for noun in okt.nouns(cleaned_text_for_nouns):
+                        if noun not in _stopwords and len(noun) > 1: # 한 글자 명사 제외
+                            nouns.append(noun)
+            
+                if not nouns:
+                    return None
+            
+                # 폰트 경로 설정
+                font_path = None
+                preferred_fonts = ['NanumGothic', 'Malgun Gothic', 'AppleGothic', 'Noto Sans KR']
+                font_list = fm.findSystemFonts(fontpaths=None, fontext='ttf')
+                
+                for font_file in font_list:
+                    try:
+                        font_name = fm.FontProperties(fname=font_file).get_name()
+                        if any(preferred in font_name for preferred in preferred_fonts):
+                            font_path = font_file
+                            break
+                    except RuntimeError:
+                        continue # 일부 폰트 파일 파싱 오류 발생 가능성
+            
+                if not font_path:
+                    # 캐시 함수 내에서 st UI 요소 직접 호출 지양
+                    print("선호하는 한글 폰트(NanumGothic, Malgun Gothic 등)를 시스템에서 찾지 못했습니다.")
+            
+                # 새로운 Figure 객체 생성
+                fig, ax = plt.subplots(figsize=(12, 6))
+                try:
+                    wordcloud = WordCloud(
+                        font_path=font_path,
+                        width=800,
+                        height=400,
+                        background_color='white',
+                        collocations=False # 연어(collocations) 방지
+                    ).generate(' '.join(nouns))
+                    
+                    ax.imshow(wordcloud, interpolation='bilinear')
+                    ax.axis('off')
+                    return fig # WordCloud 이미지 자체가 아닌 Figure 객체를 반환
+                except Exception as e:
+                    print(f"WordCloud 생성 중 오류: {e}. 폰트 문제일 수 있습니다.")
+                    plt.close(fig) # 오류 발생 시 생성된 figure 닫기
+                    return None
+
+            # 클러스터별 WordCloud 표시 함수
+            def display_cluster_wordclouds(viz_data, n_clusters, stopwords, current_collection_name):
+                st.subheader("클러스터별 주요 단어 (WordCloud)")
+
+                # 폰트 경로 미리 확인 (경고 메시지용)
+                font_path_exists = False
+                preferred_fonts = ['NanumGothic', 'Malgun Gothic', 'AppleGothic', 'Noto Sans KR']
+                font_list = fm.findSystemFonts(fontpaths=None, fontext='ttf')
+                for font_file in font_list:
+                    try:
+                        font_name = fm.FontProperties(fname=font_file).get_name()
+                        if any(preferred in font_name for preferred in preferred_fonts):
+                            font_path_exists = True
+                            break
+                    except RuntimeError:
+                        continue
+                if not font_path_exists:
+                    st.sidebar.warning("선호하는 한글 폰트(NanumGothic, Malgun Gothic 등)를 시스템에서 찾지 못했습니다. WordCloud가 깨질 수 있습니다. 폰트 설치를 권장합니다.")
+
+                for cluster_id in range(n_clusters):
+                    cluster_texts = viz_data[viz_data['cluster'] == cluster_id]['full_text'].tolist()
+                    
+                    with st.expander(f"클러스터 {cluster_id} WordCloud ({len(cluster_texts)}개 문서)"):
+                        if not cluster_texts:
+                            st.write(f"클러스터 {cluster_id}: 분석할 텍스트가 없습니다.")
+                            continue
+                        # generate_wordcloud_for_cluster 함수 호출 시 클러스터 ID도 전달
+                        wordcloud_fig = generate_wordcloud_for_cluster(cluster_texts, stopwords, current_collection_name, cluster_id)
+                        if wordcloud_fig:
+                            st.pyplot(wordcloud_fig)
+                            plt.close(wordcloud_fig) # 사용 후 figure 닫기
+                        else:
+                            st.write("WordCloud를 생성할 충분한 단어가 없거나, 생성 중 오류가 발생했습니다.")
+
             # 시각화 버튼
             if st.button("시각화 생성", key="create_viz_btn", type="primary"):
                 with st.spinner("시각화를 생성하는 중... 이 작업은 데이터 크기에 따라 시간이 걸릴 수 있습니다."):
@@ -529,14 +644,18 @@ else:
                             # 클러스터 통계 시각화
                             visualize_cluster_statistics(viz_data, colors)
                             
+                            # 클러스터별 WordCloud 표시
+                            display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS, selected_collection)
+                            
                             # 클러스터별 주요 문서 표시
                             def display_cluster_documents(viz_data, n_clusters):
                                 """클러스터별 주요 문서를 표시하는 함수"""
                                 st.subheader("클러스터별 주요 문서")
                                 for cluster_id in range(n_clusters):
                                     cluster_docs = viz_data[viz_data['cluster'] == cluster_id]
-                                    with st.expander(f"클러스터 {cluster_id} ({len(cluster_docs)}개 문서)"):
+                                    with st.expander(f"클러스터 {cluster_id} 주요 문서 ({len(cluster_docs)}개 문서)"):
                                         for _, row in cluster_docs.head(5).iterrows():
+                                            # 'text'는 요약본, 'full_text'는 원본. 여기서는 요약본을 보여주는 것이 적절할 수 있음.
                                             st.markdown(f"**출처:** {row['source']}")
                                             st.markdown(f"**내용:** {row['text']}")
                                             st.markdown("---")

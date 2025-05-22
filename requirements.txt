@@ -6,6 +6,8 @@ requests
 ollama
 kss
 sentence-transformers
-umap-learn
 plotly
 scikit-learn
+wordcloud
+konlpy
+matplotlib
