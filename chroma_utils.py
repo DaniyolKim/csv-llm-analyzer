@@ -216,7 +216,8 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     # 각 행을 처리
     for idx, row in selected_df.iterrows():
         # 행 데이터를 문자열로 변환
-        row_text = " ".join([f"{col}: {str(val)}" for col, val in row.items()])
+        # 값만 저장하는 방식
+        row_text = " ".join([str(val) for val in row.values])
         
         try:
             # kss를 사용하여 한글 문장 단위로 분할
