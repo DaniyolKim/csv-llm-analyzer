@@ -346,7 +346,7 @@ def hybrid_query_chroma(collection, query_text, n_results=5):
         n_results=n_results * 2  # 더 많은 결과를 가져와서 나중에 필터링
     )
     
-    # 2. 키워드 기반 검색 실행 (ChromaDB의 where 필터 사용)
+    # 2. 키워드 기반 검색 준비
     # 검색어를 소문자로 변환하여 대소문자 구분 없이 검색
     query_keywords = cleaned_query.lower().split()
     
@@ -360,13 +360,16 @@ def hybrid_query_chroma(collection, query_text, n_results=5):
     }
     
     # 임베딩 결과 처리
-    if embedding_results["documents"] and embedding_results["documents"][0]:
-        for i, (doc_id, doc, metadata, distance) in enumerate(zip(
+    def process_embedding_results():
+        if not embedding_results["documents"] or not embedding_results["documents"][0]:
+            return
+            
+        for doc_id, doc, metadata, distance in zip(
             embedding_results["ids"][0],
             embedding_results["documents"][0],
             embedding_results["metadatas"][0],
             embedding_results["distances"][0]
-        )):
+        ):
             # 이미 추가된 문서인지 확인
             if doc_id not in combined_results["ids"]:
                 combined_results["ids"].append(doc_id)
@@ -376,15 +379,18 @@ def hybrid_query_chroma(collection, query_text, n_results=5):
                 combined_results["search_type"].append("embedding")
     
     # 키워드 검색 결과 처리
-    # 모든 문서를 가져와서 키워드 매칭 확인
-    all_docs = collection.get()
-    
-    if all_docs and all_docs["documents"]:
-        for i, (doc_id, doc, metadata) in enumerate(zip(
+    def process_keyword_results():
+        # 모든 문서를 가져와서 키워드 매칭 확인
+        all_docs = collection.get()
+        
+        if not all_docs or not all_docs["documents"]:
+            return
+            
+        for doc_id, doc, metadata in zip(
             all_docs["ids"],
             all_docs["documents"],
             all_docs["metadatas"]
-        )):
+        ):
             # 이미 임베딩 결과에 포함된 문서는 건너뜀
             if doc_id in combined_results["ids"]:
                 continue
@@ -392,7 +398,7 @@ def hybrid_query_chroma(collection, query_text, n_results=5):
             # 문서를 소문자로 변환하여 키워드 검색
             doc_lower = doc.lower()
             
-            # 모든 키워드가 문서에 포함되어 있는지 확인
+            # 키워드가 문서에 포함되어 있는지 확인
             keyword_match = any(keyword in doc_lower for keyword in query_keywords)
             
             if keyword_match:
@@ -404,26 +410,48 @@ def hybrid_query_chroma(collection, query_text, n_results=5):
                 combined_results["distances"].append(0.5)
                 combined_results["search_type"].append("keyword")
     
-    # 결과 정렬 (거리 기준)
-    sorted_indices = sorted(range(len(combined_results["distances"])), key=lambda i: combined_results["distances"][i])
+    # 결과 처리 실행
+    process_embedding_results()
+    process_keyword_results()
     
-    # 정렬된 결과 생성
-    sorted_results = {
-        "ids": [combined_results["ids"][i] for i in sorted_indices[:n_results]],
-        "documents": [combined_results["documents"][i] for i in sorted_indices[:n_results]],
-        "metadatas": [combined_results["metadatas"][i] for i in sorted_indices[:n_results]],
-        "distances": [combined_results["distances"][i] for i in sorted_indices[:n_results]],
-        "search_type": [combined_results["search_type"][i] for i in sorted_indices[:n_results]]
-    }
+    # 결과 정렬 및 제한
+    def sort_and_limit_results():
+        # 결과가 없으면 빈 결과 반환
+        if not combined_results["distances"]:
+            return {
+                "ids": [[]],
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]],
+                "search_type": [[]]
+            }
+            
+        # 결과 정렬 (거리 기준)
+        sorted_indices = sorted(range(len(combined_results["distances"])), 
+                               key=lambda i: combined_results["distances"][i])
+        
+        # 결과 수 제한
+        sorted_indices = sorted_indices[:n_results]
+        
+        # 정렬된 결과 생성
+        sorted_results = {
+            "ids": [combined_results["ids"][i] for i in sorted_indices],
+            "documents": [combined_results["documents"][i] for i in sorted_indices],
+            "metadatas": [combined_results["metadatas"][i] for i in sorted_indices],
+            "distances": [combined_results["distances"][i] for i in sorted_indices],
+            "search_type": [combined_results["search_type"][i] for i in sorted_indices]
+        }
+        
+        # ChromaDB 결과 형식에 맞게 변환
+        return {
+            "ids": [sorted_results["ids"]],
+            "documents": [sorted_results["documents"]],
+            "metadatas": [sorted_results["metadatas"]],
+            "distances": [sorted_results["distances"]],
+            "search_type": [sorted_results["search_type"]]
+        }
     
-    # ChromaDB 결과 형식에 맞게 변환
-    return {
-        "ids": [sorted_results["ids"]],
-        "documents": [sorted_results["documents"]],
-        "metadatas": [sorted_results["metadatas"]],
-        "distances": [sorted_results["distances"]],
-        "search_type": [sorted_results["search_type"]]
-    }
+    return sort_and_limit_results()
 
 def delete_collection(collection_name, persist_directory="./chroma_db"):
     """

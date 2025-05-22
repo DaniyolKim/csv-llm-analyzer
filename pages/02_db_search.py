@@ -319,6 +319,108 @@ else:
                     help="t-SNE 알고리즘의 복잡도 매개변수입니다. 데이터 분포에 따라 조정하세요."
                 )
             
+            # 임베딩 데이터 가져오기 함수
+            def get_embeddings_data(collection, all_data, max_docs):
+                """컬렉션에서 임베딩 데이터를 가져오는 함수"""
+                total_docs = len(all_data["documents"])
+                
+                # 최대 문서 수 제한 적용
+                if total_docs > max_docs:
+                    st.info(f"문서가 너무 많아 처음 {max_docs}개만 시각화합니다.")
+                    documents = all_data["documents"][:max_docs]
+                    metadatas = all_data["metadatas"][:max_docs]
+                    ids = all_data["ids"][:max_docs]
+                    
+                    # 제한된 ID로 임베딩 가져오기
+                    try:
+                        embeddings_result = collection.get(
+                            ids=ids,
+                            include=["embeddings"]
+                        )
+                        embeddings = embeddings_result.get("embeddings", [])
+                    except Exception as e:
+                        st.warning(f"임베딩 데이터 가져오기 실패: {str(e)}")
+                        embeddings = []
+                else:
+                    documents = all_data["documents"]
+                    metadatas = all_data["metadatas"]
+                    ids = all_data["ids"]
+                    
+                    # 모든 임베딩 가져오기
+                    try:
+                        embeddings_result = collection.get(
+                            include=["embeddings"]
+                        )
+                        embeddings = embeddings_result.get("embeddings", [])
+                    except Exception as e:
+                        st.warning(f"임베딩 데이터 가져오기 실패: {str(e)}")
+                        embeddings = []
+                
+                return documents, metadatas, ids, embeddings
+            
+            # 임베딩 없을 때 처리 함수
+            def handle_missing_embeddings(collection, documents):
+                """임베딩 데이터가 없을 때 처리하는 함수"""
+                # 컬렉션 메타데이터에서 임베딩 모델 정보 확인
+                embedding_model = "알 수 없음"
+                try:
+                    if collection.metadata and "embedding_model" in collection.metadata:
+                        embedding_model = collection.metadata["embedding_model"]
+                except:
+                    pass
+                
+                # 임베딩 함수 확인
+                has_embedding_function = hasattr(collection, "_embedding_function") and collection._embedding_function is not None
+                
+                if has_embedding_function:
+                    st.warning(f"이 컬렉션은 '{embedding_model}' 임베딩 모델로 생성되었지만, 임베딩 데이터를 가져올 수 없습니다.")
+                    st.info("컬렉션을 다시 로드하거나, 데이터를 다시 저장해보세요.")
+                else:
+                    st.warning("컬렉션에 임베딩 함수가 설정되지 않았습니다.")
+                    st.info(f"이 컬렉션은 '{embedding_model}' 임베딩 모델로 생성되었습니다. 동일한 모델로 데이터를 다시 저장해보세요.")
+                
+                # 대체 시각화 방법 제안
+                st.info("임베딩 데이터 없이 시각화를 진행하시겠습니까? 임의의 임베딩을 생성하여 시각화할 수 있습니다.")
+                if st.button("임의 임베딩으로 시각화 진행", key="random_viz_btn"):
+                    # 임의의 임베딩 생성 (문서 수 x 384 차원)
+                    st.text("임의 임베딩 생성 중...")
+                    import numpy as np
+                    random_dim = 384  # 일반적인 임베딩 차원
+                    num_docs = len(documents)
+                    embeddings = np.random.rand(num_docs, random_dim)
+                    st.success(f"임의의 {num_docs}x{random_dim} 임베딩을 생성했습니다.")
+                    return embeddings
+                else:
+                    st.stop()
+                    return []
+            
+            # 시각화 데이터 준비 함수
+            def prepare_visualization_data(embeddings_array, documents, ids, metadatas, perplexity, n_clusters):
+                """시각화를 위한 데이터를 준비하는 함수"""
+                # t-SNE로 차원 축소
+                st.text("t-SNE로 차원 축소 중...")
+                tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+                embeddings_2d = tsne.fit_transform(embeddings_array)
+                
+                # K-means 클러스터링
+                st.text("클러스터링 중...")
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                clusters = kmeans.fit_predict(embeddings_array)
+                
+                # 데이터프레임 생성
+                viz_data = pd.DataFrame({
+                    'x': embeddings_2d[:, 0],
+                    'y': embeddings_2d[:, 1],
+                    'cluster': clusters,
+                    'id': ids,
+                    'text': [doc[:100] + "..." if len(doc) > 100 else doc for doc in documents]
+                })
+                
+                # 출처 정보 추가
+                viz_data['source'] = [metadata.get("source", "알 수 없음") for metadata in metadatas]
+                
+                return viz_data
+            
             # 시각화 버튼
             if st.button("시각화 생성", key="create_viz_btn", type="primary"):
                 with st.spinner("시각화를 생성하는 중... 이 작업은 데이터 크기에 따라 시간이 걸릴 수 있습니다."):
@@ -334,102 +436,21 @@ else:
                             total_docs = len(all_data["documents"])
                             st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
                             
-                            # 최대 문서 수 제한
-                            if total_docs > max_docs:
-                                st.info(f"문서가 너무 많아 처음 {max_docs}개만 시각화합니다.")
-                                # 문서, 메타데이터, 임베딩 제한
-                                documents = all_data["documents"][:max_docs]
-                                metadatas = all_data["metadatas"][:max_docs]
-                                ids = all_data["ids"][:max_docs]
-                                
-                                # 임베딩 가져오기
-                                try:
-                                    embeddings_result = collection.get(
-                                        ids=ids,
-                                        include=["embeddings"]
-                                    )
-                                    embeddings = embeddings_result.get("embeddings", [])
-                                except Exception as e:
-                                    st.warning(f"임베딩 데이터 가져오기 실패: {str(e)}")
-                                    embeddings = []
-                            else:
-                                documents = all_data["documents"]
-                                metadatas = all_data["metadatas"]
-                                ids = all_data["ids"]
-                                
-                                # 임베딩 가져오기
-                                try:
-                                    embeddings_result = collection.get(
-                                        include=["embeddings"]
-                                    )
-                                    embeddings = embeddings_result.get("embeddings", [])
-                                except Exception as e:
-                                    st.warning(f"임베딩 데이터 가져오기 실패: {str(e)}")
-                                    embeddings = []
+                            # 임베딩 데이터 가져오기
+                            documents, metadatas, ids, embeddings = get_embeddings_data(collection, all_data, max_docs)
                             
                             # 임베딩이 없는 경우 처리
-                            print(embeddings)
                             if len(embeddings) == 0:
                                 st.error("임베딩 데이터를 가져올 수 없습니다.")
-                                
-                                # 컬렉션 메타데이터에서 임베딩 모델 정보 확인
-                                embedding_model = "알 수 없음"
-                                try:
-                                    if collection.metadata and "embedding_model" in collection.metadata:
-                                        embedding_model = collection.metadata["embedding_model"]
-                                except:
-                                    pass
-                                
-                                # 임베딩 함수 확인
-                                has_embedding_function = hasattr(collection, "_embedding_function") and collection._embedding_function is not None
-                                
-                                if has_embedding_function:
-                                    st.warning(f"이 컬렉션은 '{embedding_model}' 임베딩 모델로 생성되었지만, 임베딩 데이터를 가져올 수 없습니다.")
-                                    st.info("컬렉션을 다시 로드하거나, 데이터를 다시 저장해보세요.")
-                                else:
-                                    st.warning("컬렉션에 임베딩 함수가 설정되지 않았습니다.")
-                                    st.info(f"이 컬렉션은 '{embedding_model}' 임베딩 모델로 생성되었습니다. 동일한 모델로 데이터를 다시 저장해보세요.")
-                                
-                                # 대체 시각화 방법 제안
-                                st.info("임베딩 데이터 없이 시각화를 진행하시겠습니까? 임의의 임베딩을 생성하여 시각화할 수 있습니다.")
-                                if st.button("임의 임베딩으로 시각화 진행", key="random_viz_btn"):
-                                    # 임의의 임베딩 생성 (문서 수 x 384 차원)
-                                    st.text("임의 임베딩 생성 중...")
-                                    import numpy as np
-                                    random_dim = 384  # 일반적인 임베딩 차원
-                                    num_docs = len(documents)
-                                    embeddings = np.random.rand(num_docs, random_dim)
-                                    st.success(f"임의의 {num_docs}x{random_dim} 임베딩을 생성했습니다.")
-                                else:
-                                    st.stop()
+                                embeddings = handle_missing_embeddings(collection, documents)
                             
                             # 임베딩 배열로 변환
                             embeddings_array = np.array(embeddings)
                             
-                            # t-SNE로 차원 축소
-                            st.text("t-SNE로 차원 축소 중...")
-                            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
-                            embeddings_2d = tsne.fit_transform(embeddings_array)
-                            
-                            # K-means 클러스터링
-                            st.text("클러스터링 중...")
-                            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-                            clusters = kmeans.fit_predict(embeddings_array)
-                            
-                            # 데이터프레임 생성
-                            viz_data = pd.DataFrame({
-                                'x': embeddings_2d[:, 0],
-                                'y': embeddings_2d[:, 1],
-                                'cluster': clusters,
-                                'id': ids,
-                                'text': [doc[:100] + "..." if len(doc) > 100 else doc for doc in documents]
-                            })
-                            
-                            # 출처 정보 추가
-                            sources = []
-                            for metadata in metadatas:
-                                sources.append(metadata.get("source", "알 수 없음"))
-                            viz_data['source'] = sources
+                            # 시각화 데이터 준비
+                            viz_data = prepare_visualization_data(
+                                embeddings_array, documents, ids, metadatas, perplexity, n_clusters
+                            )
                             
                             # Plotly로 시각화
                             st.subheader("문서 클러스터 시각화")
@@ -446,24 +467,30 @@ else:
                             fig = go.Figure()
                             
                             # 클러스터별로 점 추가
-                            for cluster_id in range(n_clusters):
-                                cluster_data = viz_data[viz_data['cluster'] == cluster_id]
-                                
-                                fig.add_trace(go.Scatter(
-                                    x=cluster_data['x'],
-                                    y=cluster_data['y'],
-                                    mode='markers',
-                                    marker=dict(
-                                        size=10,
-                                        color=colors[cluster_id],
-                                        line=dict(width=1, color='DarkSlateGrey')
-                                    ),
-                                    name=f'클러스터 {cluster_id}',
-                                    text=cluster_data['text'],
-                                    hoverinfo='text',
-                                    hovertemplate='<b>출처:</b> %{customdata}<br><b>내용:</b> %{text}<extra></extra>',
-                                    customdata=cluster_data['source']
-                                ))
+                            def add_cluster_traces(fig, viz_data, n_clusters, colors):
+                                """클러스터별로 그래프에 점 추가"""
+                                for cluster_id in range(n_clusters):
+                                    cluster_data = viz_data[viz_data['cluster'] == cluster_id]
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=cluster_data['x'],
+                                        y=cluster_data['y'],
+                                        mode='markers',
+                                        marker=dict(
+                                            size=10,
+                                            color=colors[cluster_id],
+                                            line=dict(width=1, color='DarkSlateGrey')
+                                        ),
+                                        name=f'클러스터 {cluster_id}',
+                                        text=cluster_data['text'],
+                                        hoverinfo='text',
+                                        hovertemplate='<b>출처:</b> %{customdata}<br><b>내용:</b> %{text}<extra></extra>',
+                                        customdata=cluster_data['source']
+                                    ))
+                                return fig
+                            
+                            # 클러스터별로 점 추가
+                            fig = add_cluster_traces(fig, viz_data, n_clusters, colors)
                             
                             # 레이아웃 설정
                             fig.update_layout(
@@ -479,33 +506,43 @@ else:
                             # 그래프 표시
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            # 클러스터 통계
-                            st.subheader("클러스터 통계")
-                            cluster_counts = viz_data['cluster'].value_counts().reset_index()
-                            cluster_counts.columns = ['클러스터', '문서 수']
+                            # 클러스터 통계 시각화
+                            def visualize_cluster_statistics(viz_data, colors):
+                                """클러스터 통계를 시각화하는 함수"""
+                                st.subheader("클러스터 통계")
+                                cluster_counts = viz_data['cluster'].value_counts().reset_index()
+                                cluster_counts.columns = ['클러스터', '문서 수']
+                                
+                                # 클러스터별 문서 수 차트
+                                fig_bar = go.Figure(go.Bar(
+                                    x=cluster_counts['클러스터'],
+                                    y=cluster_counts['문서 수'],
+                                    marker_color=colors[:len(cluster_counts)]
+                                ))
+                                fig_bar.update_layout(
+                                    title='클러스터별 문서 수',
+                                    xaxis=dict(title='클러스터'),
+                                    yaxis=dict(title='문서 수')
+                                )
+                                st.plotly_chart(fig_bar, use_container_width=True)
                             
-                            # 클러스터별 문서 수 차트
-                            fig_bar = go.Figure(go.Bar(
-                                x=cluster_counts['클러스터'],
-                                y=cluster_counts['문서 수'],
-                                marker_color=colors[:len(cluster_counts)]
-                            ))
-                            fig_bar.update_layout(
-                                title='클러스터별 문서 수',
-                                xaxis=dict(title='클러스터'),
-                                yaxis=dict(title='문서 수')
-                            )
-                            st.plotly_chart(fig_bar, use_container_width=True)
+                            # 클러스터 통계 시각화
+                            visualize_cluster_statistics(viz_data, colors)
                             
                             # 클러스터별 주요 문서 표시
-                            st.subheader("클러스터별 주요 문서")
-                            for cluster_id in range(n_clusters):
-                                with st.expander(f"클러스터 {cluster_id} ({len(viz_data[viz_data['cluster'] == cluster_id])}개 문서)"):
+                            def display_cluster_documents(viz_data, n_clusters):
+                                """클러스터별 주요 문서를 표시하는 함수"""
+                                st.subheader("클러스터별 주요 문서")
+                                for cluster_id in range(n_clusters):
                                     cluster_docs = viz_data[viz_data['cluster'] == cluster_id]
-                                    for _, row in cluster_docs.head(5).iterrows():
-                                        st.markdown(f"**출처:** {row['source']}")
-                                        st.markdown(f"**내용:** {row['text']}")
-                                        st.markdown("---")
+                                    with st.expander(f"클러스터 {cluster_id} ({len(cluster_docs)}개 문서)"):
+                                        for _, row in cluster_docs.head(5).iterrows():
+                                            st.markdown(f"**출처:** {row['source']}")
+                                            st.markdown(f"**내용:** {row['text']}")
+                                            st.markdown("---")
+                            
+                            # 클러스터별 주요 문서 표시
+                            display_cluster_documents(viz_data, n_clusters)
                         else:
                             st.info("컬렉션에 데이터가 없습니다.")
                     
