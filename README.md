@@ -32,6 +32,7 @@ cd csv-rag
 
 ```bash
 python -m venv venv
+venv\Script\activate #windows의 경우
 ```
 
 4. 필요한 패키지 설치
