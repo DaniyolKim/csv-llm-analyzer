@@ -15,23 +15,30 @@
 
 ## 설치 방법
 
-1. 저장소 클론
+1. Ollama 설치 (필수사항)
+
+- [Ollama 웹사이트](https://ollama.ai/download)에서 운영체제에 맞는 버전을 다운로드하여 설치합니다.
+- 모델 다운로드: `ollama pull llama2` 또는 `ollama pull exaone3.5:7.8b` 등 원하는 모델을 설치
+
+
+2. 저장소 클론
 
 ```bash
 git clone https://github.com/DaniyolKim/csv-rag.git
 cd csv-rag
 ```
 
-2. 필요한 패키지 설치
+3. python 가상 환경 생성
+
+```bash
+python -m venv venv
+```
+
+4. 필요한 패키지 설치
 
 ```bash
 pip install -r requirements.txt
 ```
-
-3. Ollama 설치 (선택사항)
-
-- [Ollama 웹사이트](https://ollama.ai/download)에서 운영체제에 맞는 버전을 다운로드하여 설치합니다.
-- 모델 다운로드: `ollama pull llama2` 또는 `ollama pull exaone3.5:7.8b` 등 원하는 모델을 설치
 
 ## 사용 방법
 
