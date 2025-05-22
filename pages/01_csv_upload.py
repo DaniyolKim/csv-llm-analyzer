@@ -147,19 +147,15 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
         # 임베딩 모델 선택 UI
         st.write("임베딩 모델 선택:")
         
-        # 사용 가능한 임베딩 모델 목록 가져오기
-        embedding_models_by_category = get_available_embedding_models()
+        # 사용 가능한 한국어 임베딩 모델 목록 가져오기
+        embedding_models = get_available_embedding_models().get("한국어 특화 모델", [])
         
-        # 모델 카테고리 선택 (한국어, 다국어, 영어)
-        model_category = st.radio(
-            "모델 카테고리",
-            list(embedding_models_by_category.keys()),
-            index=1 if "한국어 특화 모델" in embedding_models_by_category else 0,
-            horizontal=True
-        )
+        if not embedding_models:
+            st.warning("사용 가능한 한국어 임베딩 모델이 없습니다. 기본 모델을 사용합니다.")
+            embedding_models = ["snunlp/KR-SBERT-V40K-klueNLI-augSTS"]  # 기본 모델
         
-        # 선택한 카테고리의 모델 목록
-        selected_category_models = embedding_models_by_category[model_category]
+        # 모델 선택
+        selected_category_models = embedding_models
         
         # 모델 선택
         selected_embedding_model = st.selectbox(
@@ -170,14 +166,6 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
         
         # 선택한 모델 세션 상태에 저장
         st.session_state.embedding_model = selected_embedding_model
-        
-        # 모델 설명 표시
-        if model_category == "한국어 특화 모델":
-            st.info("한국어 특화 모델은 한글 텍스트에 최적화되어 있습니다.")
-        elif model_category == "다국어 모델":
-            st.info("다국어 모델은 여러 언어를 지원하며 한글도 처리할 수 있습니다.")
-        elif model_category == "영어 특화 모델":
-            st.warning("영어 특화 모델은 영어 텍스트에 최적화되어 있습니다. 한글 처리 성능이 낮을 수 있습니다.")
         
         # ChromaDB 저장 버튼
         if st.button("ChromaDB에 데이터 저장"):
