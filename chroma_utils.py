@@ -5,9 +5,16 @@ import os
 import uuid
 import kss
 import chromadb
+import gc
+import time
+import logging
+import pandas as pd  # pandas 모듈 추가
 from text_utils import clean_text
 from data_utils import preprocess_dataframe
 from embedding_utils import get_embedding_function, get_embedding_status, get_normalized_embedding_function
+
+# 로깅 설정
+logger = logging.getLogger("chroma_utils")
 
 def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db", overwrite=False, embedding_model="all-MiniLM-L6-v2"):
     """
@@ -25,46 +32,50 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
     # 디렉토리가 없으면 생성
     os.makedirs(persist_directory, exist_ok=True)
     
-    # ChromaDB 클라이언트 생성
-    client = chromadb.PersistentClient(path=persist_directory)
-    
-    # 임베딩 함수 설정 (L2 정규화 적용)
-    embedding_function = get_normalized_embedding_function(embedding_model)
-    
-    # 컬렉션 존재 여부 확인
-    collections = client.list_collections()
-    collection_exists = collection_name in [c.name for c in collections]
-    
-    if collection_exists:
-        if overwrite:
-            # 기존 컬렉션 삭제 후 새로 생성
-            client.delete_collection(collection_name)
+    try:
+        # ChromaDB 클라이언트 생성
+        client = chromadb.PersistentClient(path=persist_directory)
+        
+        # 임베딩 함수 설정 (L2 정규화 적용)
+        embedding_function = get_normalized_embedding_function(embedding_model)
+        
+        # 컬렉션 존재 여부 확인
+        collections = client.list_collections()
+        collection_exists = collection_name in [c.name for c in collections]
+        
+        if collection_exists:
+            if overwrite:
+                # 기존 컬렉션 삭제 후 새로 생성
+                client.delete_collection(collection_name)
+                collection = client.create_collection(
+                    name=collection_name,
+                    embedding_function=embedding_function,
+                    metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
+                )
+            else:
+                # 기존 컬렉션 사용
+                collection = client.get_collection(
+                    name=collection_name,
+                    embedding_function=embedding_function
+                )
+                # 기존 컬렉션에 임베딩 모델 메타데이터 업데이트
+                try:
+                    collection.metadata = {"embedding_model": embedding_model}
+                except:
+                    # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
+                    pass
+        else:
+            # 새 컬렉션 생성
             collection = client.create_collection(
                 name=collection_name,
                 embedding_function=embedding_function,
                 metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
             )
-        else:
-            # 기존 컬렉션 사용
-            collection = client.get_collection(
-                name=collection_name,
-                embedding_function=embedding_function
-            )
-            # 기존 컬렉션에 임베딩 모델 메타데이터 업데이트
-            try:
-                collection.metadata = {"embedding_model": embedding_model}
-            except:
-                # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
-                pass
-    else:
-        # 새 컬렉션 생성
-        collection = client.create_collection(
-            name=collection_name,
-            embedding_function=embedding_function,
-            metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
-        )
-    
-    return client, collection
+        
+        return client, collection
+    except Exception as e:
+        logger.error(f"ChromaDB 생성 중 오류 발생: {e}")
+        raise
 
 def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db"):
     """
@@ -184,110 +195,204 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
     """
-    # 데이터 전처리
-    from text_utils import chunk_text_semantic, extract_keywords
-    selected_df = preprocess_dataframe(df, selected_columns, max_rows)
+    start_time = time.time()
+    logger.info(f"ChromaDB 데이터 저장 시작: {collection_name}")
     
-    # 전처리 후 데이터가 없는 경우
-    if selected_df.empty:
-        raise ValueError("선택한 열에 유효한 데이터가 없습니다. 결측치가 있는 행은 모두 제거됩니다.")
-    
-    # ChromaDB 생성 또는 로드 (임베딩 모델 지정)
-    client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append, embedding_model=embedding_model)
-    
-    # 임베딩 함수가 제대로 설정되었는지 확인
-    if not hasattr(collection, "_embedding_function") or collection._embedding_function is None:
-        print("경고: 컬렉션에 임베딩 함수가 설정되지 않았습니다. 시각화 기능이 작동하지 않을 수 있습니다.")
-    
-    # 배치 처리를 위한 변수 초기화
-    batch_documents = []
-    batch_metadatas = []
-    batch_ids = []
-    
-    # 기존 문서 ID 가져오기 (중복 방지)
-    existing_ids = set()
-    if append:
-        try:
-            # 기존 컬렉션에서 모든 ID 가져오기
-            existing_ids = set(collection.get()["ids"])
-        except:
-            # ID를 가져올 수 없는 경우 빈 세트 사용
-            existing_ids = set()
-    
-    # 각 행을 처리
-    for idx, row in selected_df.iterrows():
-        # 행 데이터를 문자열로 변환
-        row_text = " ".join([str(val) for val in row.values])
+    try:
+        # 데이터 전처리
+        from text_utils import chunk_text_semantic, extract_keywords
+        selected_df = preprocess_dataframe(df, selected_columns, max_rows)
         
-        try:
-            # 의미 기반 청킹 함수 사용
-            chunks = chunk_text_semantic(row_text, chunk_size, chunk_overlap)
-            
-            # 청크가 없으면 원본 텍스트를 그대로 사용
-            if not chunks:
-                chunks = [row_text]
-                
-        except Exception as e:
-            print(f"의미 기반 청킹 중 오류 발생: {e}, 기본 분할 방식 사용")
-            # 청킹에 실패한 경우, 간단히 텍스트 길이로 분할
-            chunks = []
-            for i in range(0, len(row_text), chunk_size - chunk_overlap):
-                end = min(i + chunk_size, len(row_text))
-                chunks.append(row_text[i:end])
-                if end >= len(row_text):
-                    break
-            
-            # 청크가 너무 작으면 하나로 합치기
-            if len(chunks) == 1 or all(len(chunk) < chunk_size // 4 for chunk in chunks):
-                chunks = [row_text]
+        # 전처리 후 데이터가 없는 경우
+        if selected_df.empty:
+            raise ValueError("선택한 열에 유효한 데이터가 없습니다. 결측치가 있는 행은 모두 제거됩니다.")
         
-        # 청크 처리
-        for i, chunk in enumerate(chunks):
-            # 키워드 추출 (메타데이터로 저장)
+        # 처리할 전체 행 수
+        total_rows = len(selected_df)
+        logger.info(f"처리할 전체 행 수: {total_rows}")
+        
+        # ChromaDB 생성 또는 로드 (임베딩 모델 지정)
+        client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append, embedding_model=embedding_model)
+        
+        # 임베딩 함수가 제대로 설정되었는지 확인
+        if not hasattr(collection, "_embedding_function") or collection._embedding_function is None:
+            logger.warning("경고: 컬렉션에 임베딩 함수가 설정되지 않았습니다. 시각화 기능이 작동하지 않을 수 있습니다.")
+        
+        # 기존 문서 ID 가져오기 (중복 방지)
+        existing_ids = set()
+        if append:
             try:
-                keywords = extract_keywords(chunk, top_n=5)
-                keywords_str = ", ".join(keywords)
-            except:
-                keywords_str = ""
+                # 기존 컬렉션에서 모든 ID 가져오기 시도
+                try:
+                    existing_ids = set(collection.get()["ids"])
+                    logger.info(f"기존 문서 ID {len(existing_ids)}개 로드됨")
+                except Exception as e:
+                    # get() 메서드가 제대로 작동하지 않는 경우 query() 메서드로 시도
+                    logger.warning(f"기존 ID를 get() 메서드로 가져오는데 실패: {e}, query() 메서드 시도 중...")
+                    result = collection.query(query_texts=[""], n_results=1)
+                    if result and "ids" in result and result["ids"]:
+                        # 컬렉션이 존재하지만 문서가 없는 경우
+                        existing_ids = set()
+                    else:
+                        logger.error(f"query() 메서드도 실패: {e}")
+                        existing_ids = set()
+            except Exception as e:
+                # ID를 가져올 수 없는 경우 빈 세트 사용
+                logger.error(f"기존 ID를 가져오는 중 오류 발생: {e}, 빈 세트 사용")
+                existing_ids = set()
+        
+        # 총 처리 건수 추적
+        total_documents_processed = 0
+        
+        # 병렬 처리 대신 부분적으로 행을 처리하여 메모리 사용량 최적화
+        # 최대 처리 행 수가 지정된 경우 슬라이싱
+        if max_rows:
+            selected_df = selected_df.head(max_rows)
+        
+        # 더 작은 청크 단위로 나누어 처리
+        chunk_size_rows = min(batch_size * 5, 500)  # 한 번에 최대 500행씩 처리
+        total_chunks = (len(selected_df) + chunk_size_rows - 1) // chunk_size_rows
+        
+        for chunk_idx in range(total_chunks):
+            # 행 청크 계산
+            start_idx = chunk_idx * chunk_size_rows
+            end_idx = min((chunk_idx + 1) * chunk_size_rows, len(selected_df))
+            df_chunk = selected_df.iloc[start_idx:end_idx]
             
-            # 고유 ID 생성 (UUID 사용)
-            doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
-
-            # ID 중복 확인
-            while doc_id in existing_ids:
-                doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
-
-            existing_ids.add(doc_id)
-            batch_documents.append(chunk)
+            # 배치 처리를 위한 변수 초기화
+            batch_documents = []
+            batch_metadatas = []
+            batch_ids = []
             
-            # 메타데이터에 키워드 정보 추가
-            batch_metadatas.append({
-                "source": f"row_{idx}",
-                "chunk": i,
-                "keywords": keywords_str
-            })
-            batch_ids.append(doc_id)
-            
-            # 배치 크기에 도달하면 저장
-            if len(batch_documents) >= batch_size:
-                collection.add(
-                    documents=batch_documents,
-                    metadatas=batch_metadatas,
-                    ids=batch_ids
-                )
-                batch_documents = []
-                batch_metadatas = []
-                batch_ids = []
-
-    # 남은 배치 처리
-    if batch_documents:
-        collection.add(
-            documents=batch_documents,
-            metadatas=batch_metadatas,
-            ids=batch_ids
-        )
+            # 각 행을 처리
+            for idx, row in df_chunk.iterrows():
+                # 메모리 상태 확인 및 최적화
+                if idx % 100 == 0 and idx > 0:
+                    # 가비지 컬렉션 호출 (메모리 최적화)
+                    gc.collect()
+                
+                # 행 데이터를 문자열로 변환
+                try:
+                    row_text = " ".join([str(val) for val in row.values if not pd.isna(val)])
+                except Exception as e:
+                    logger.error(f"행 {idx} 데이터 변환 중 오류: {e}, 건너뜁니다")
+                    continue
+                
+                # 행이 비어 있으면 건너뛰기
+                if not row_text.strip():
+                    logger.warning(f"행 {idx}이(가) 비어 있어 건너뜁니다")
+                    continue
+                
+                try:
+                    # 의미 기반 청킹 함수 사용
+                    try:
+                        chunks = chunk_text_semantic(row_text, chunk_size, chunk_overlap)
+                    except Exception as e:
+                        logger.warning(f"의미 기반 청킹 중 오류 발생: {e}, 기본 분할 방식 사용")
+                        # 텍스트 길이가 너무 길면 분할
+                        chunks = []
+                        if len(row_text) > chunk_size:
+                            for i in range(0, len(row_text), chunk_size - chunk_overlap):
+                                end = min(i + chunk_size, len(row_text))
+                                chunks.append(row_text[i:end])
+                                if end >= len(row_text):
+                                    break
+                        else:
+                            chunks = [row_text]
+                    
+                    # 청크가 없으면 원본 텍스트를 그대로 사용
+                    if not chunks:
+                        chunks = [row_text]
+                    
+                    # 청크가 너무 작으면 하나로 합치기
+                    if len(chunks) == 1 or all(len(chunk) < chunk_size // 4 for chunk in chunks):
+                        chunks = [row_text]
+                        
+                except Exception as e:
+                    logger.error(f"행 {idx} 청킹 중 오류 발생: {e}, 원본 텍스트 사용")
+                    chunks = [row_text]
+                
+                # 청크 처리
+                for i, chunk in enumerate(chunks):
+                    if not chunk.strip():
+                        continue
+                        
+                    # 키워드 추출 (메타데이터로 저장)
+                    try:
+                        keywords = extract_keywords(chunk, top_n=5)
+                        keywords_str = ", ".join(keywords)
+                    except Exception as e:
+                        logger.warning(f"키워드 추출 중 오류 발생: {e}")
+                        keywords_str = ""
+                    
+                    # 고유 ID 생성 (UUID 사용)
+                    doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
     
-    return client, collection
+                    # ID 중복 확인 (무한 루프 방지를 위한 최대 시도 횟수 제한)
+                    max_attempts = 5
+                    attempts = 0
+                    while doc_id in existing_ids and attempts < max_attempts:
+                        doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
+                        attempts += 1
+    
+                    existing_ids.add(doc_id)
+                    batch_documents.append(chunk)
+                    
+                    # 메타데이터에 키워드 정보 추가
+                    batch_metadatas.append({
+                        "source": f"row_{idx}",
+                        "chunk": i,
+                        "keywords": keywords_str
+                    })
+                    batch_ids.append(doc_id)
+                    
+                    # 배치 크기에 도달하면 저장
+                    if len(batch_documents) >= batch_size:
+                        try:
+                            collection.add(
+                                documents=batch_documents,
+                                metadatas=batch_metadatas,
+                                ids=batch_ids
+                            )
+                            total_documents_processed += len(batch_documents)
+                            logger.info(f"배치 저장 성공: {len(batch_documents)}개 문서, 전체 진행률: {total_documents_processed}/{total_rows*2} 문서")
+                        except Exception as e:
+                            logger.error(f"배치 저장 중 오류 발생: {e}, 계속 진행합니다")
+                            
+                        # 배치 초기화
+                        batch_documents = []
+                        batch_metadatas = []
+                        batch_ids = []
+                        
+                        # 메모리 최적화를 위한 가비지 컬렉션 호출
+                        gc.collect()
+            
+            # 남은 배치 처리
+            if batch_documents:
+                try:
+                    collection.add(
+                        documents=batch_documents,
+                        metadatas=batch_metadatas,
+                        ids=batch_ids
+                    )
+                    total_documents_processed += len(batch_documents)
+                    logger.info(f"남은 배치 저장 성공: {len(batch_documents)}개 문서, 전체 진행률: {total_documents_processed}/{total_rows*2} 문서")
+                except Exception as e:
+                    logger.error(f"남은 배치 저장 중 오류 발생: {e}")
+            
+            # 청크마다 가비지 컬렉션 호출 및 약간의 지연 추가
+            gc.collect()
+            time.sleep(0.5)  # 메모리 정리를 위한 짧은 지연
+            
+            logger.info(f"행 청크 {chunk_idx+1}/{total_chunks} 처리 완료")
+        
+        end_time = time.time()
+        logger.info(f"ChromaDB 데이터 저장 완료: {total_documents_processed}개 문서, 소요 시간: {end_time - start_time:.2f}초")
+        
+        return client, collection
+    except Exception as e:
+        logger.error(f"ChromaDB 데이터 저장 중 오류 발생: {e}")
+        raise
 
 def query_chroma(collection, query_text, n_results=5):
     """

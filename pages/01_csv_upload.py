@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import os
 import time
+import traceback
+import logging
 from utils import (
     store_data_in_chroma,
     clean_text,
@@ -10,6 +12,17 @@ from utils import (
     get_available_embedding_models,
     get_embedding_status
 )
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("csv_upload.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("csv_uploader")
 
 st.set_page_config(
     page_title="CSV 업로드 및 처리",
@@ -345,6 +358,10 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
                         st.session_state.rag_enabled = True
                     except Exception as e:
                         st.error(f"ChromaDB 저장 중 오류 발생: {e}")
+                        logger.error(f"ChromaDB 저장 중 오류 발생: {e}")
+                        logger.debug(traceback.format_exc())
     
     except Exception as e:
         st.error(f"파일을 처리하는 중 오류가 발생했습니다: {e}")
+        logger.error(f"파일을 처리하는 중 오류 발생: {e}")
+        logger.debug(traceback.format_exc())
