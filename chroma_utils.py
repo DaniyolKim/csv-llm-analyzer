@@ -167,6 +167,7 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
                           embedding_model="all-MiniLM-L6-v2"):
     """
     선택한 열의 데이터를 ChromaDB에 저장합니다.
+    의미 기반 청킹 기능을 사용하여 검색 정확도와 유사도 계산의 품질을 향상시킵니다.
     
     Args:
         df (pandas.DataFrame): 데이터프레임
@@ -184,6 +185,7 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
     """
     # 데이터 전처리
+    from text_utils import chunk_text_semantic, extract_keywords
     selected_df = preprocess_dataframe(df, selected_columns, max_rows)
     
     # 전처리 후 데이터가 없는 경우
@@ -207,7 +209,6 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     if append:
         try:
             # 기존 컬렉션에서 모든 ID 가져오기
-            # 참고: 대용량 컬렉션의 경우 이 부분이 메모리 문제를 일으킬 수 있음
             existing_ids = set(collection.get()["ids"])
         except:
             # ID를 가져올 수 없는 경우 빈 세트 사용
@@ -216,48 +217,19 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     # 각 행을 처리
     for idx, row in selected_df.iterrows():
         # 행 데이터를 문자열로 변환
-        # 값만 저장하는 방식
         row_text = " ".join([str(val) for val in row.values])
         
         try:
-            # kss를 사용하여 한글 문장 단위로 분할
-            sentences = kss.split_sentences(row_text)
+            # 의미 기반 청킹 함수 사용
+            chunks = chunk_text_semantic(row_text, chunk_size, chunk_overlap)
             
-            # 문장들을 최대 길이(chunk_size)를 고려하여 청크로 결합
-            chunks = []
-            current_chunk = ""
-            
-            for sentence in sentences:
-                # 하나의 문장이 chunk_size보다 길면 그대로 청크로 추가
-                if len(sentence) > chunk_size:
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                        current_chunk = ""
-                    chunks.append(sentence)
-                    continue
-                
-                # 현재 청크에 문장을 추가했을 때 chunk_size를 초과하는지 확인
-                if len(current_chunk) + len(sentence) + 1 > chunk_size:  # +1: 공백 고려
-                    chunks.append(current_chunk)
-                    current_chunk = sentence
-                else:
-                    # 공백 추가 (첫 문장이 아닌 경우)
-                    if current_chunk:
-                        current_chunk += " " + sentence
-                    else:
-                        current_chunk = sentence
-            
-            # 남은 청크가 있으면 추가
-            if current_chunk:
-                chunks.append(current_chunk)
-                
             # 청크가 없으면 원본 텍스트를 그대로 사용
             if not chunks:
                 chunks = [row_text]
                 
         except Exception as e:
-            print(f"문장 분할 중 오류 발생: {e}, 기본 분할 방식 사용")
-            # kss 분할에 실패한 경우, 간단히 텍스트 길이로 분할
+            print(f"의미 기반 청킹 중 오류 발생: {e}, 기본 분할 방식 사용")
+            # 청킹에 실패한 경우, 간단히 텍스트 길이로 분할
             chunks = []
             for i in range(0, len(row_text), chunk_size - chunk_overlap):
                 end = min(i + chunk_size, len(row_text))
@@ -271,6 +243,13 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         
         # 청크 처리
         for i, chunk in enumerate(chunks):
+            # 키워드 추출 (메타데이터로 저장)
+            try:
+                keywords = extract_keywords(chunk, top_n=5)
+                keywords_str = ", ".join(keywords)
+            except:
+                keywords_str = ""
+            
             # 고유 ID 생성 (UUID 사용)
             doc_id = f"row_{idx}_chunk_{i}_{uuid.uuid4().hex[:8]}"
 
@@ -280,7 +259,13 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
 
             existing_ids.add(doc_id)
             batch_documents.append(chunk)
-            batch_metadatas.append({"source": f"row_{idx}", "chunk": i})
+            
+            # 메타데이터에 키워드 정보 추가
+            batch_metadatas.append({
+                "source": f"row_{idx}",
+                "chunk": i,
+                "keywords": keywords_str
+            })
             batch_ids.append(doc_id)
             
             # 배치 크기에 도달하면 저장
@@ -293,7 +278,7 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
                 batch_documents = []
                 batch_metadatas = []
                 batch_ids = []
-    
+
     # 남은 배치 처리
     if batch_documents:
         collection.add(
