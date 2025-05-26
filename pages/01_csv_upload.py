@@ -254,9 +254,18 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
         st.subheader("데이터 전처리 옵션")
         st.info("선택한 열에 결측치가 있는 행은 자동으로 제거되며, 텍스트에서 산술 기호(+, -, *, /, %, =)와 문장 구분 기호(., ?, !, ;, :, ,)를 제외한 특수문자가 제거됩니다. 또한 ', 조합과 '] 조합은 .로 변환됩니다.")
         
-        # 행 수 제한 옵션
-        max_rows = st.number_input("처리할 최대 행 수 (0 = 제한 없음)", min_value=0, value=100, step=100)
-        batch_size = st.number_input("배치 처리 크기", min_value=10, value=100, step=10)
+        # 행 수 제한 및 배치 크기 옵션 (한 줄에 표시)
+        col1, col2 = st.columns(2)
+        with col1:
+            max_rows = st.number_input("처리할 최대 행 수 (0 = 제한 없음)", min_value=0, value=100, step=100)
+        with col2:
+            batch_size = st.number_input(
+                "배치 처리 크기", 
+                min_value=10, 
+                value=100, 
+                step=10,
+                help="한 번에 ChromaDB에 저장할 문서(청크)의 수입니다. 메모리 사용량과 처리 속도에 영향을 줍니다. 큰 파일의 경우 메모리 부족을 방지하고, DB 연산 효율을 높입니다.")
+        
         
         # 전처리 미리보기
         if selected_columns:
