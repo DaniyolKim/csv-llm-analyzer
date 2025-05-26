@@ -442,8 +442,8 @@ else:
                     'y': embeddings_2d[:, 1],
                     'cluster': clusters,
                     'id': ids,
-                    'text': [doc[:100] + "..." if len(doc) > 100 else doc for doc in documents], # 요약 텍스트 (hover용)
-                    'full_text': documents # 원본 텍스트 (WordCloud 및 상세 내용 표시용)
+                    'text': documents,  # 전체 텍스트 표시 (hover용)
+                    'full_text': documents  # 원본 텍스트 (WordCloud 및 상세 내용 표시용)
                 })
                 
                 # 출처 정보 추가
@@ -656,9 +656,9 @@ else:
                                     cluster_docs = viz_data[viz_data['cluster'] == cluster_id]
                                     with st.expander(f"클러스터 {cluster_id} 주요 문서 ({len(cluster_docs)}개 문서)"):
                                         for _, row in cluster_docs.head(5).iterrows():
-                                            # 'text'는 요약본, 'full_text'는 원본. 여기서는 요약본을 보여주는 것이 적절할 수 있음.
+                                            # 원본 텍스트 전체를 표시
                                             st.markdown(f"**출처:** {row['source']}")
-                                            st.markdown(f"**내용:** {row['text']}")
+                                            st.markdown(f"**내용:** {row['full_text']}")
                                             st.markdown("---")
                             
                             # 클러스터별 주요 문서 표시
