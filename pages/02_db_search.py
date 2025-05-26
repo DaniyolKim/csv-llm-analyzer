@@ -69,7 +69,7 @@ with st.sidebar:
     collections = get_available_collections(persist_directory=db_path)
     
     if not collections:
-        st.error(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다.")
+        st.error(f"'{db_path}' 경로에 사용 가능한 컬렉션이 없습니다.")
         selected_collection = None
         # 컬렉션이 없으면 세션 상태 초기화
         st.session_state.collection_loaded = False
@@ -91,7 +91,7 @@ with st.sidebar:
             st.session_state.current_db_path = db_path
             
     # 컬렉션 로드 버튼
-    if selected_collection and not st.session_state.collection_loaded:
+    if selected_collection and not st.session_state.collection_loaded:        
         if st.button("컬렉션 로드", key="load_collection_btn"):
             with st.spinner("컬렉션을 로드하는 중..."):
                 try:
@@ -105,6 +105,7 @@ with st.sidebar:
                     st.success(f"컬렉션 '{selected_collection}'을 성공적으로 로드했습니다.")
                 except Exception as e:
                     st.error(f"컬렉션 로드 중 오류 발생: {e}")
+            
     
     # 컬렉션이 로드된 경우 상태 표시
     if st.session_state.collection_loaded:
@@ -137,7 +138,7 @@ tab1, tab2, tab3 = st.tabs(["컬렉션 데이터", "텍스트 검색", "시각�
 if not collections:
     for tab in [tab1, tab2, tab3]:
         with tab:
-            st.warning(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다. 먼저 CSV 파일을 업로드하고 DB에 저장해주세요.")
+            st.error(f"선택한 경로({db_path})에 사용 가능한 컬렉션이 없습니다. 먼저 CSV 파일을 업로드하고 DB에 저장해주세요.")
 else:
     # 컬렉션이 로드되지 않은 경우 안내 메시지
     if not st.session_state.collection_loaded:

@@ -1,5 +1,6 @@
 import streamlit as st
 import time
+import os  # 파일 경로 검증을 위한 os 모듈 추가
 from utils import (
     is_ollama_installed,
     is_ollama_running,
@@ -50,123 +51,117 @@ st.title("Custom RAG")
 
 # 사이드바에 기존 ChromaDB 로드 옵션 추가
 with st.sidebar:
-    st.header("기존 ChromaDB 로드")
+    st.header("DB 설정")
     
-    # ChromaDB 경로 입력
-    chroma_path = st.text_input("ChromaDB 경로", value=st.session_state.chroma_path)
-    st.session_state.chroma_path = chroma_path
+    # ChromaDB 경로 설정
+    default_db_path = "./chroma_db"
+    db_path = st.text_input(
+        "ChromaDB 경로",
+        value=st.session_state.chroma_path,
+        help="ChromaDB가 저장된 경로를 입력하세요. 기본값은 './chroma_db'입니다."
+    )
+    st.session_state.chroma_path = db_path
+    
+    # 경로가 존재하는지 확인
+    if not os.path.exists(db_path):
+        st.warning(f"입력한 경로({db_path})가 존재하지 않습니다. 기본 경로를 사용합니다.")
+        db_path = default_db_path
+        st.session_state.chroma_path = default_db_path
     
     # 사용 가능한 컬렉션 목록 가져오기
-    available_collections = get_available_collections(chroma_path)
+    available_collections = get_available_collections(db_path)
     
     if available_collections:
         st.success(f"✅ {len(available_collections)}개의 컬렉션을 찾았습니다.")
         
-        # 삭제할 컬렉션 상태 관리
-        if 'collection_to_delete' not in st.session_state:
-            st.session_state.collection_to_delete = None
+        # 현재 사용중인 컬렉션 이름과 DB 경로 상태 추가
+        if 'current_collection_name' not in st.session_state:
+            st.session_state.current_collection_name = st.session_state.collection_name
+        if 'current_db_path' not in st.session_state:
+            st.session_state.current_db_path = st.session_state.chroma_path
+        if 'collection_loaded' not in st.session_state:
+            st.session_state.collection_loaded = False
             
-        if 'show_delete_confirm' not in st.session_state:
-            st.session_state.show_delete_confirm = False
+        # 컬렉션 선택 UI
+        selected_collection = st.selectbox(
+            "컬렉션 선택",
+            options=available_collections,
+            index=0 if available_collections and available_collections[0] == st.session_state.collection_name else 0,
+            help="검색할 ChromaDB 컬렉션을 선택하세요."
+        )
+        st.session_state.collection_name = selected_collection
+        
+        # 컬렉션이나 경로가 변경되면 세션 상태 업데이트
+        if (selected_collection != st.session_state.current_collection_name or 
+            db_path != st.session_state.current_db_path):
+            st.session_state.collection_loaded = False
+            st.session_state.current_collection_name = selected_collection
+            st.session_state.current_db_path = db_path
             
-        # 컬렉션 선택을 위한 컨테이너
-        collection_container = st.container()
-        
-        with collection_container:
-            # 컬렉션 목록 표시
-            st.write("### 컬렉션 목록")
-            for collection in available_collections:
-                col1, col2 = st.columns([7, 2])
-                with col1:
-                    # 컬렉션 이름 표시
-                    is_selected = st.radio(
-                        label="",
-                        options=[collection],
-                        key=f"radio_{collection}",
-                        label_visibility="collapsed",
-                        index=0 if collection == st.session_state.collection_name else None
-                    )
-                    if is_selected:
-                        st.session_state.collection_name = collection
-                
-                with col2:
-                    # 삭제 버튼
-                    if st.button("삭제", key=f"delete_{collection}", type="secondary"):
-                        st.session_state.collection_to_delete = collection
-                        st.session_state.show_delete_confirm = True
-        
-
-                        
-        # 삭제 확인 다이얼로그
-        if st.session_state.show_delete_confirm and st.session_state.collection_to_delete:
-            with st.expander(f"'{st.session_state.collection_to_delete}' 컬렉션을 삭제하시겠습니까?", expanded=True):
-                st.warning(f"'{st.session_state.collection_to_delete}' 컬렉션의 모든 데이터가 삭제됩니다.")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("확인", key="confirm_delete", type="primary"):
-                        # 컬렉션 삭제 수행
-                        success = delete_collection(st.session_state.collection_to_delete, chroma_path)
-                        if success:
-                            # 현재 로드된 컬렉션이 삭제되었다면 상태 초기화
-                            if st.session_state.collection_name == st.session_state.collection_to_delete:
-                                st.session_state.chroma_collection = None
-                                st.session_state.chroma_client = None
-                                st.session_state.rag_enabled = False
-                            
-                            st.success(f"'{st.session_state.collection_to_delete}' 컬렉션이 삭제되었습니다.")
-                            # 상태 초기화
-                            st.session_state.collection_to_delete = None
-                            st.session_state.show_delete_confirm = False
-                            
-                            # 페이지 새로고침
-                            st.rerun()
-                        else:
-                            st.error(f"'{st.session_state.collection_to_delete}' 컬렉션 삭제 중 오류가 발생했습니다.")
-                
-                with col2:
-                    if st.button("취소", key="cancel_delete"):
-                        st.session_state.collection_to_delete = None
-                        st.session_state.show_delete_confirm = False
-                        st.rerun()
-                    
         # 컬렉션 로드 버튼
-        if st.button("컬렉션 로드"):
-            try:
-                client, collection = load_chroma_collection(
-                    st.session_state.collection_name, 
-                    chroma_path
-                )
-                st.session_state.chroma_client = client
-                st.session_state.chroma_collection = collection
-                st.session_state.rag_enabled = True
-                
-                # 임베딩 모델 상태 확인
-                embedding_status = get_embedding_status()
-                
-                # 컬렉션에 저장된 임베딩 모델 정보 확인
-                stored_model = None
+        if st.button("컬렉션 로드", key="load_collection_btn"):
+            with st.spinner("컬렉션을 로드하는 중..."):
                 try:
-                    if collection.metadata and "embedding_model" in collection.metadata:
-                        stored_model = collection.metadata["embedding_model"]
-                        # 저장된 모델 정보가 있으면 세션 상태 업데이트
-                        st.session_state.embedding_model = stored_model
-                        st.info(f"컬렉션에 저장된 임베딩 모델 '{stored_model}'을 사용합니다.")
-                except:
-                    pass
-                
-                if embedding_status["fallback_used"]:
-                    st.warning(f"""
-                    ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.
-                    - 요청 모델: {embedding_status["requested_model"]}
-                    - 사용된 모델: {embedding_status["actual_model"]}
-                    - 원인: {embedding_status["error_message"]}
-                    """)
-                
-                st.success(f"컬렉션 '{st.session_state.collection_name}'을 성공적으로 로드했습니다.")
-            except Exception as e:
-                st.error(f"컬렉션 로드 중 오류 발생: {e}")
+                    client, collection = load_chroma_collection(
+                        collection_name=selected_collection,
+                        persist_directory=db_path
+                    )
+                    st.session_state.chroma_client = client
+                    st.session_state.chroma_collection = collection
+                    st.session_state.rag_enabled = True
+                    st.session_state.collection_loaded = True
+                    
+                    # 임베딩 모델 상태 확인
+                    embedding_status = get_embedding_status()
+                    
+                    # 컬렉션에 저장된 임베딩 모델 정보 확인
+                    stored_model = None
+                    try:
+                        if collection.metadata and "embedding_model" in collection.metadata:
+                            stored_model = collection.metadata["embedding_model"]
+                            # 저장된 모델 정보가 있으면 세션 상태 업데이트
+                            st.session_state.embedding_model = stored_model
+                            st.info(f"컬렉션에 저장된 임베딩 모델 '{stored_model}'을 사용합니다.")
+                    except:
+                        pass
+                    
+                    if embedding_status["fallback_used"]:
+                        st.warning(f"""
+                        ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.
+                        - 요청 모델: {embedding_status["requested_model"]}
+                        - 사용된 모델: {embedding_status["actual_model"]}
+                        - 원인: {embedding_status["error_message"]}
+                        """)
+                    
+                    st.success(f"컬렉션 '{selected_collection}'을 성공적으로 로드했습니다.")
+                except Exception as e:
+                    st.error(f"컬렉션 로드 중 오류 발생: {e}")
+        
+        # 컬렉션이 로드된 경우 상태 표시
+        if st.session_state.collection_loaded:
+            # 컬렉션 정보 표시
+            with st.expander("컬렉션 정보"):
+                try:
+                    # 이미 로드된 컬렉션 사용
+                    collection = st.session_state.chroma_collection
+                    collection_info = collection.count()
+                    
+                    # 컬렉션에 저장된 임베딩 모델 정보 확인
+                    embedding_model = "알 수 없음"
+                    try:
+                        if collection.metadata and "embedding_model" in collection.metadata:
+                            embedding_model = collection.metadata["embedding_model"]
+                    except:
+                        pass
+                    
+                    st.write(f"컬렉션 이름: {selected_collection}")
+                    st.write(f"문서 수: {collection_info}")
+                    st.write(f"임베딩 모델: {embedding_model}")
+                    st.write(f"DB 경로: {db_path}")
+                except Exception as e:
+                    st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
     else:
-        st.info(f"'{chroma_path}' 경로에 사용 가능한 컬렉션이 없습니다.")
+        st.error(f"'{db_path}' 경로에 사용 가능한 컬렉션이 없습니다.")
     
     st.markdown("---")
 

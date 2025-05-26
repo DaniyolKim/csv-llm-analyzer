@@ -13,7 +13,7 @@ from utils import (
 
 st.set_page_config(
     page_title="CSV 업로드 및 처리",
-    page_icon="📊",
+    page_icon="📄",
     layout="wide"
 )
 
@@ -37,6 +37,133 @@ if 'embedding_model' not in st.session_state:
 
 # 제목
 st.title("CSV 파일 업로드 및 처리")
+
+# 사이드바에 ChromaDB 로드 옵션 추가
+with st.sidebar:
+    st.header("DB 설정")
+    
+    # ChromaDB 경로 설정
+    default_db_path = "./chroma_db"
+    db_path = st.text_input(
+        "ChromaDB 경로",
+        value=st.session_state.chroma_path,
+        help="ChromaDB가 저장된 경로를 입력하세요. 기본값은 './chroma_db'입니다."
+    )
+    st.session_state.chroma_path = db_path
+    
+    # 경로가 존재하는지 확인
+    if not os.path.exists(db_path):
+        st.warning(f"입력한 경로({db_path})가 존재하지 않습니다. 기본 경로를 사용합니다.")
+        db_path = default_db_path
+        st.session_state.chroma_path = default_db_path
+    
+    # 사용 가능한 컬렉션 목록 가져오기
+    available_collections = get_available_collections(db_path)
+    
+    if available_collections:
+        st.success(f"✅ {len(available_collections)}개의 컬렉션을 찾았습니다.")
+        
+        # 상태 관리를 위한 세션 상태 추가
+        if 'collection_to_delete' not in st.session_state:
+            st.session_state.collection_to_delete = None
+            
+        if 'show_delete_confirm' not in st.session_state:
+            st.session_state.show_delete_confirm = False
+            
+        # 현재 사용중인 컬렉션 이름과 DB 경로 상태 추가
+        if 'current_collection_name' not in st.session_state:
+            st.session_state.current_collection_name = st.session_state.collection_name
+        if 'current_db_path' not in st.session_state:
+            st.session_state.current_db_path = st.session_state.chroma_path
+        if 'collection_loaded' not in st.session_state:
+            st.session_state.collection_loaded = False
+            
+        # 컬렉션 선택 UI
+        selected_collection = st.selectbox(
+            "컬렉션 선택",
+            options=available_collections,
+            index=0 if available_collections and available_collections[0] == st.session_state.collection_name else 0,
+            help="검색할 ChromaDB 컬렉션을 선택하세요."
+        )
+        st.session_state.collection_name = selected_collection
+        
+        # 컬렉션이나 경로가 변경되면 세션 상태 업데이트
+        if (selected_collection != st.session_state.current_collection_name or 
+            db_path != st.session_state.current_db_path):
+            st.session_state.collection_loaded = False
+            st.session_state.current_collection_name = selected_collection
+            st.session_state.current_db_path = db_path
+            
+        # 컬렉션 관리 버튼 행
+        col1, col2 = st.columns(2)
+                
+        with col2:
+            # 삭제 버튼
+            if st.button("컬렉션 삭제", key="delete_collection_btn", type="secondary"):
+                st.session_state.collection_to_delete = selected_collection
+                st.session_state.show_delete_confirm = True
+                        
+        # 삭제 확인 다이얼로그
+        if st.session_state.show_delete_confirm and st.session_state.collection_to_delete:
+            from utils import delete_collection
+            with st.expander(f"'{st.session_state.collection_to_delete}' 컬렉션을 삭제하시겠습니까?", expanded=True):
+                st.warning(f"'{st.session_state.collection_to_delete}' 컬렉션의 모든 데이터가 삭제됩니다.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("확인", key="confirm_delete", type="primary"):
+                        # 컬렉션 삭제 수행
+                        success = delete_collection(st.session_state.collection_to_delete, db_path)
+                        if success:
+                            # 현재 로드된 컬렉션이 삭제되었다면 상태 초기화
+                            if st.session_state.collection_name == st.session_state.collection_to_delete:
+                                st.session_state.chroma_collection = None
+                                st.session_state.chroma_client = None
+                                st.session_state.rag_enabled = False
+                                st.session_state.collection_loaded = False
+                            
+                            st.success(f"'{st.session_state.collection_to_delete}' 컬렉션이 삭제되었습니다.")
+                            # 상태 초기화
+                            st.session_state.collection_to_delete = None
+                            st.session_state.show_delete_confirm = False
+                            
+                            # 페이지 새로고침
+                            st.rerun()
+                        else:
+                            st.error(f"'{st.session_state.collection_to_delete}' 컬렉션 삭제 중 오류가 발생했습니다.")
+                
+                with col2:
+                    if st.button("취소", key="cancel_delete"):
+                        st.session_state.collection_to_delete = None
+                        st.session_state.show_delete_confirm = False
+                        st.rerun()
+        
+        # 컬렉션이 로드된 경우 상태 표시
+        if st.session_state.collection_loaded:
+            # 컬렉션 정보 표시
+            with st.expander("컬렉션 정보"):
+                try:
+                    # 이미 로드된 컬렉션 사용
+                    collection = st.session_state.chroma_collection
+                    collection_info = collection.count()
+                    
+                    # 컬렉션에 저장된 임베딩 모델 정보 확인
+                    embedding_model = "알 수 없음"
+                    try:
+                        if collection.metadata and "embedding_model" in collection.metadata:
+                            embedding_model = collection.metadata["embedding_model"]
+                    except:
+                        pass
+                    
+                    st.write(f"컬렉션 이름: {selected_collection}")
+                    st.write(f"문서 수: {collection_info}")
+                    st.write(f"임베딩 모델: {embedding_model}")
+                    st.write(f"DB 경로: {db_path}")
+                except Exception as e:
+                    st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
+    else:
+        st.error(f"'{db_path}' 경로에 사용 가능한 컬렉션이 없습니다.")
+    
+    st.markdown("---")
 
 # 파일 업로드
 st.subheader("CSV 파일 선택")
