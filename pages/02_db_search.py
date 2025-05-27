@@ -11,6 +11,7 @@ from chroma_utils import load_chroma_collection, get_available_collections, hybr
 from wordcloud import WordCloud
 from konlpy.tag import Okt
 import matplotlib.pyplot as plt
+from text_utils import KOREAN_STOPWORDS # text_utils에서 불용어 목록 가져오기
 import matplotlib.font_manager as fm
 import random # 무작위 선택을 위해 추가
 
@@ -31,20 +32,6 @@ if 'current_collection_name' not in st.session_state:
     st.session_state.current_collection_name = None
 if 'current_db_path' not in st.session_state:
     st.session_state.current_db_path = None
-
-# 한국어 불용어 리스트 (예시, 필요에 따라 추가/수정)
-KOREAN_STOPWORDS = [
-    '이', '있', '하', '것', '들', '그', '되', '수', '이', '보', '않', '없', '나', '사람', '주', '아니', '등', '같', '우리',
-    '때', '년', '가', '한', '지', '대하', '오', '말', '일', '그렇', '위하', '때문', '그것', '두', '말하', '알', '그러나',
-    '받', '못하', '일', '그런', '또', '문제', '더', '많', '그리고', '좋', '크', '따르', '중', '나오', '가지', '씨', '시키',
-    '만들', '지금', '생각하', '그러', '속', '하나', '집', '살', '모르', '적', '월', '데', '자신', '안', '어떤', '내', '경우',
-    '명', '생각', '시간', '그녀', '다시', '이런', '앞', '보이', '번', '다른', '어떻', '여자', '남자', '개', '정도', '좀',
-    '원', '잘', '통하', '소리', '놓', '부분', '그냥', '정말', '지금', '오늘', '어제', '내일', '여기', '저기', '거기',
-    '매우', '아주', '너무', '정말', '진짜', '완전', '같은', '다른', '모든', '여러', '몇', '사실', '경우', '내용', '부분',
-    '결과', '자료', '정보', '데이터', '분석', '처리', '기능', '구현', '요청', '확인', '문서', '텍스트', '단어', '추가',
-    '사용', '선택', '입력', '출력', '표시', '생성', '제거', '포함', '위치', '사이', '기반', '형태', '위주', '다음', '파일',
-    '페이지', '항목', '항상', '보통', '자주', '가끔', '거의', '매일', '매주', '매년', '통해', '위해', '대한', '관련', '따라'
-]
 
 st.title("DB 검색")
 
