@@ -1,12 +1,16 @@
 # CSV LLM 분석기
 
-텍스트 CSV 파일을 분석하고 RAG(Retrieval-Augmented Generation) 시스템을 구성하는 도구입니다.
+텍스트 기반 CSV 파일의 내용을 심층 분석하고, Ollama 로컬 LLM과 연동하여 RAG(Retrieval-Augmented Generation) 질의응답 시스템을 손쉽게 구축 및 활용할 수 있도록 돕는 Streamlit 웹 애플리케이션입니다.
 
-(kss lib 사용을 위해 python 3.10에서 동작함)
+## 사전 준비 사항
+
+- **Python 3.10**: `kss` 라이브러리와의 호환성을 위해 필요합니다.
+- **Java Development Kit (JDK) 1.8 이상**: `konlpy` 라이브러리 실행 환경을 위해 필요합니다. `java -version`으로 설치 여부 및 버전을 확인하세요. (Konlpy 설치 가이드 참고)
+- **Ollama**: 로컬 LLM 실행 환경입니다.
 
 ## 주요 기능
 
-- CSV 파일 미리보기 및 분석 (여러 인코딩 자동 지원: utf-8, cp949, euc-kr 등)
+- CSV 파일 미리보기, 기본 분석 및 다양한 인코딩(utf-8, cp949, euc-kr 등) 자동 감지 지원
 - 텍스트 데이터 전처리 (결측치 제거, 특수문자 제거)
 - ChromaDB를 사용한 벡터 데이터베이스 구축 및 그래픽 시각화
 - Ollama를 통한 로컬 LLM 연동
@@ -14,14 +18,16 @@
 - 유사도 기반 문서 필터링 및 하이브리드 검색(키워드 + 임베딩)
 
 ## 설치 방법
+1. **사전 준비 사항 확인**
+    - Python 3.10 설치 여부를 확인합니다.
+    - Java (JDK 1.8 이상) 설치 및 `JAVA_HOME` 환경 변수 설정 여부를 확인합니다.
 
-1. Ollama 설치 (필수사항)
+2. **Ollama 설치 및 모델 다운로드**
+    - Ollama 웹사이트에서 운영체제에 맞는 버전을 다운로드하여 설치합니다. (https://ollama.com/download)
+    - Ollama 서버 실행: 터미널에서 `ollama serve` 명령을 실행합니다 (백그라운드 실행 권장).
+    - 원하는 LLM 모델 다운로드: 예) `ollama pull exaone3.5:7.8b`, `ollama pull llama2`, `ollama pull gemma:2b` (사용 가능한 모델 목록: Ollama models(https://ollama.com/search))
 
-- [Ollama 웹사이트](https://ollama.ai/download)에서 운영체제에 맞는 버전을 다운로드하여 설치합니다.
-- 모델 다운로드: `ollama pull llama2` 또는 `ollama pull exaone3.5:7.8b` 등 원하는 모델을 설치
-
-
-2. 저장소 클론
+3. **저장소 클론**
 
 ```bash
 git clone https://github.com/DaniyolKim/csv-rag.git
@@ -32,7 +38,10 @@ cd csv-rag
 
 ```bash
 python -m venv venv
-venv\Script\activate #windows의 경우
+# windows
+venv\Scripts\activate
+# linux, mac
+source venv/bin/activate
 ```
 
 4. 필요한 패키지 설치
@@ -43,13 +52,17 @@ pip install -r requirements.txt
 
 ## 사용 방법
 
-1. Streamlit 앱 실행
+1. Ollama 서버 실행 확인
+
+터미널에서 ollama serve 명령이 실행 중인지 확인합니다. (백그라운드 실행 권장)
+
+2. Streamlit 앱 실행
 
 ```bash
 streamlit run Home.py
 ```
 
-2. 웹 브라우저에서 앱 접속
+3. 웹 브라우저에서 앱 접속
 
 - 기본 URL: http://localhost:8501
 
@@ -105,7 +118,6 @@ csv-llm-analyzer/
 
 ## 주의사항
 
-- `.gitignore`에 명시된 것처럼 CSV 데이터, 모델 파일 및 Chroma DB 관련 파일은 GitHub에 업로드되지 않습니다.
 - 대용량 CSV 파일(수십만 행 이상)의 경우 배치 처리 크기를 조정하여 메모리 사용량을 관리하세요.
 
 ## 라이선스
