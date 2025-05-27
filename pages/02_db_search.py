@@ -175,7 +175,8 @@ else:
                                     "ID": id,
                                     "출처": metadata.get("source", "알 수 없음"),
                                     "청크": metadata.get("chunk", "알 수 없음"),
-                                    "내용": doc
+                                    "키워드": metadata.get("keywords", "알 수 없음"),
+                                    "내용": doc,
                                 })
                             
                             # 데이터프레임 생성 및 표시
@@ -188,7 +189,8 @@ else:
                                     "ID": st.column_config.TextColumn(width="medium"),
                                     "출처": st.column_config.TextColumn(width="small"),
                                     "청크": st.column_config.NumberColumn(width="small"),
-                                    "내용": st.column_config.TextColumn(width="large")
+                                    "키워드": st.column_config.TextColumn(width="medium", help="문서에서 추출된 주요 키워드입니다."),
+                                    "내용": st.column_config.TextColumn(width="large"),
                                 }
                             )
                             
@@ -270,7 +272,8 @@ else:
                                     "검색 유형": search_type,
                                     "출처": metadata.get("source", "알 수 없음"),
                                     "청크": metadata.get("chunk", "알 수 없음"),
-                                    "내용": doc
+                                    "키워드": metadata.get("keywords", "알 수 없음"),
+                                    "내용": doc,
                                 })
                             
                             # 데이터프레임 생성 및 표시
@@ -285,7 +288,8 @@ else:
                                     "검색 유형": st.column_config.TextColumn(width="small"),
                                     "출처": st.column_config.TextColumn(width="small"),
                                     "청크": st.column_config.NumberColumn(width="small"),
-                                    "내용": st.column_config.TextColumn(width="large")
+                                    "키워드": st.column_config.TextColumn(width="medium", help="문서에서 추출된 주요 키워드입니다."),
+                                    "내용": st.column_config.TextColumn(width="large"),
                                 }
                             )
                             
