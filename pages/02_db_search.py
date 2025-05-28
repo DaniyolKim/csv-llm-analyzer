@@ -1,17 +1,17 @@
 import streamlit as st
 import pandas as pd
 import os
+import sys
+
+# 상위 디렉토리를 경로에 추가합니다
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 from chroma_utils import load_chroma_collection, get_available_collections
 from text_utils import KOREAN_STOPWORDS
-# 새로 생성한 유틸리티 모듈 import
-from db_search_utils import (
-    load_collection_data, display_collection_data,
-    search_collection, display_search_results,
-    get_embeddings_data, handle_missing_embeddings,
-    prepare_visualization_data, display_cluster_wordclouds,
-    create_cluster_visualization, visualize_cluster_statistics,
-    display_cluster_documents
-)
+
+# 새로운 방식으로 모듈 전체를 import
+import db_search_utils
 
 st.set_page_config(
     page_title="DB 검색",
@@ -130,11 +130,11 @@ def render_collection_data_tab(selected_collection):
                 collection = st.session_state.chroma_collection
                 
                 # 컬렉션 데이터 로드
-                result_df, _ = load_collection_data(collection)
+                result_df, _ = db_search_utils.load_collection_data(collection)
                 
                 if result_df is not None:
                     st.success(f"총 {len(result_df)}개의 문서를 로드했습니다.")
-                    display_collection_data(result_df)
+                    db_search_utils.display_collection_data(result_df)
                 else:
                     st.info("컬렉션에 데이터가 없습니다.")
             except Exception as e:
@@ -168,10 +168,10 @@ def render_search_tab():
                 collection = st.session_state.chroma_collection
                 
                 # 검색 실행
-                result_df = search_collection(collection, query, n_results=n_results)
+                result_df = db_search_utils.search_collection(collection, query, n_results=n_results)
                 
                 # 검색 결과 표시
-                display_search_results(result_df)
+                db_search_utils.display_search_results(result_df)
                 
             except Exception as e:
                 st.error(f"검색 중 오류가 발생했습니다: {str(e)}")
@@ -211,6 +211,16 @@ def render_visualization_tab(selected_collection):
             step=5,
             help="t-SNE가 각 데이터 포인트 주변의 '유효 이웃 수'를 결정하는 값입니다. 데이터의 지역적 구조와 전역적 구조 사이의 균형에 영향을 줍니다."
         )
+        
+        # LDA 토픽 수 설정 추가
+        lda_topics = st.slider(
+            "LDA 토픽 수",
+            min_value=2,
+            max_value=10,
+            value=3,
+            step=1,
+            help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
+        )
     
     # 시각화 버튼
     if st.button("시각화 생성", key="create_viz_btn", type="primary"):
@@ -220,7 +230,7 @@ def render_visualization_tab(selected_collection):
                 collection = st.session_state.chroma_collection
                 
                 # 컬렉션의 모든 데이터 가져오기
-                _, all_data = load_collection_data(collection)
+                _, all_data = db_search_utils.load_collection_data(collection)
                 
                 if all_data and all_data["documents"]:
                     # 결과 표시
@@ -228,33 +238,36 @@ def render_visualization_tab(selected_collection):
                     st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
                     
                     # 임베딩 데이터 가져오기
-                    documents, metadatas, ids, embeddings = get_embeddings_data(collection, all_data, max_docs)
+                    documents, metadatas, ids, embeddings = db_search_utils.get_embeddings_data(collection, all_data, max_docs)
                     
                     # 임베딩이 없는 경우 처리
                     if len(embeddings) == 0:
                         st.error("임베딩 데이터를 가져올 수 없습니다.")
-                        embeddings = handle_missing_embeddings(collection, documents)
+                        embeddings = db_search_utils.handle_missing_embeddings(collection, documents)
                     
                     # 임베딩 배열로 변환
                     import numpy as np
                     embeddings_array = np.array(embeddings)
                     
                     # 시각화 데이터 준비
-                    viz_data = prepare_visualization_data(
+                    viz_data = db_search_utils.prepare_visualization_data(
                         embeddings_array, documents, ids, metadatas, perplexity, n_clusters
                     )
                     
                     # 클러스터 시각화
-                    create_cluster_visualization(viz_data, n_clusters)
+                    db_search_utils.create_cluster_visualization(viz_data, n_clusters)
                     
                     # 클러스터 통계 시각화
-                    visualize_cluster_statistics(viz_data, n_clusters)
+                    db_search_utils.visualize_cluster_statistics(viz_data, n_clusters)
                     
                     # 클러스터별 WordCloud 표시
-                    display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
+                    db_search_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
+                    
+                    # 클러스터별 LDA 토픽 모델링 표시
+                    db_search_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
                     
                     # 클러스터별 주요 문서 표시
-                    display_cluster_documents(viz_data, n_clusters)
+                    db_search_utils.display_cluster_documents(viz_data, n_clusters)
                 else:
                     st.info("컬렉션에 데이터가 없습니다.")
             
