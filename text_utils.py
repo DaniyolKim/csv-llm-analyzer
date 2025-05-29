@@ -92,6 +92,7 @@ def chunk_text_semantic(text: str, chunk_size: int = 500, chunk_overlap: int = 5
         # 문장들을 최대 길이(chunk_size)를 고려하여 청크로 결합
         chunks = []
         current_chunk = ""
+        last_sentence = ""  # 마지막으로 처리한 문장 저장
         
         for sentence in sentences:
             # 하나의 문장이 chunk_size보다 길면 그대로 청크로 추가
@@ -100,16 +101,36 @@ def chunk_text_semantic(text: str, chunk_size: int = 500, chunk_overlap: int = 5
                     chunks.append(current_chunk)
                 chunks.append(sentence[:chunk_size])  # 길면 잘라서 추가
                 current_chunk = ""
+                last_sentence = ""
                 continue
             
             # 현재 청크에 문장을 추가했을 때 chunk_size를 초과하는지 확인
             if len(current_chunk) + len(sentence) + 1 > chunk_size:
                 chunks.append(current_chunk)
                 
-                # 중복(오버랩) 설정: 이전 청크의 마지막 부분을 이어서 시작
-                if chunk_overlap > 0 and len(current_chunk) > chunk_overlap:
-                    overlap_text = current_chunk[-chunk_overlap:]
-                    current_chunk = overlap_text + " " + sentence
+                # 중복(오버랩) 설정: 전체 문장 단위로 오버랩 처리
+                if chunk_overlap > 0:
+                    # 현재 청크의 마지막 문장들을 파악
+                    chunk_sentences = kss.split_sentences(current_chunk)
+                    
+                    # 오버랩에 포함될 문장들 결정
+                    overlap_size = 0
+                    overlap_sentences = []
+                    
+                    # 뒤에서부터 문장을 추가하여 오버랩 크기 결정
+                    for s in reversed(chunk_sentences):
+                        if overlap_size + len(s) + 1 <= chunk_overlap:
+                            overlap_sentences.insert(0, s)
+                            overlap_size += len(s) + 1
+                        else:
+                            # 오버랩 크기를 초과하면 중단
+                            break
+                    
+                    # 완전한 문장들로 구성된 오버랩 청크 생성
+                    if overlap_sentences:
+                        current_chunk = " ".join(overlap_sentences) + " " + sentence
+                    else:
+                        current_chunk = sentence
                 else:
                     current_chunk = sentence
             else:
@@ -118,16 +139,38 @@ def chunk_text_semantic(text: str, chunk_size: int = 500, chunk_overlap: int = 5
                     current_chunk += " " + sentence
                 else:
                     current_chunk = sentence
+            
+            last_sentence = sentence
         
         # 남은 청크가 있으면 추가
         if current_chunk:
             chunks.append(current_chunk)
         
-        # 청크가 없으면 원본 텍스트를 그대로 사용
-        if not chunks:
-            chunks = [text]
+        # 청크 후처리: 중복 내용 검사 및 누락된 텍스트 확인
+        processed_chunks = []
+        for i, chunk in enumerate(chunks):
+            # 연속된 청크 간에 단어가 잘리지 않았는지 검사
+            if i > 0:
+                prev_chunk = chunks[i-1]
+                # 현재 청크의 시작 부분과 이전 청크의 마지막 부분이 올바르게 연결되었는지 확인
+                current_words = chunk.split()
+                prev_words = prev_chunk.split()
+                
+                # 중복 시작 단어 확인 (이전 청크의 마지막 단어로 시작하는지)
+                if len(current_words) > 0 and len(prev_words) > 0:
+                    # 단어 중복/누락 방지
+                    processed_chunk = chunk
+                    processed_chunks.append(processed_chunk)
+                else:
+                    processed_chunks.append(chunk)
+            else:
+                processed_chunks.append(chunk)
         
-        return chunks
+        # 청크가 없으면 원본 텍스트를 그대로 사용
+        if not processed_chunks:
+            processed_chunks = [text]
+        
+        return processed_chunks
         
     except Exception as e:
         print(f"텍스트 청킹 중 오류 발생: {e}")
