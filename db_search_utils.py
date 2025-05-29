@@ -123,15 +123,37 @@ def display_search_results(result_df):
     """검색 결과를 표시하는 함수"""
     if result_df is None or len(result_df) == 0:
         st.info("검색 결과가 없습니다.")
-        return
+        return None
         
     st.subheader(f"검색 결과: {len(result_df)}개")
     
-    st.dataframe(
+    # 문서 ID를 저장할 세션 상태 초기화
+    if 'selected_docs_to_delete' not in st.session_state:
+        st.session_state.selected_docs_to_delete = []
+    
+    # 선택할 수 있는 체크박스 추가
+    result_df['선택'] = False
+    
+    # 모든 문서 선택/해제 체크박스
+    col1, col2 = st.columns([1, 20])
+    with col1:
+        select_all = st.checkbox("전체 선택", key="select_all_docs")
+    
+    if select_all:
+        result_df['선택'] = True
+    
+    # 결과 데이터프레임에 체크박스 열을 추가하여 표시
+    edited_df = st.data_editor(
         result_df,
         use_container_width=True,
         hide_index=True,
         column_config={
+            "선택": st.column_config.CheckboxColumn(
+                "선택",
+                help="삭제할 문서를 선택하세요",
+                default=False,
+                width="small"
+            ),
             "순위": st.column_config.NumberColumn(width="small"),
             "유사도": st.column_config.TextColumn(width="small"),
             "검색 유형": st.column_config.TextColumn(width="small"),
@@ -142,6 +164,16 @@ def display_search_results(result_df):
         }
     )
     
+    # 선택된 문서 확인
+    selected_rows = edited_df[edited_df['선택'] == True]
+    
+    if not selected_rows.empty:
+        st.session_state.selected_docs_to_delete = selected_rows.index.tolist()
+        st.write(f"{len(selected_rows)}개 문서가 삭제를 위해 선택되었습니다.")
+        
+        if st.button("선택한 문서 삭제", type="primary", key="delete_selected_docs"):
+            return selected_rows
+    
     # 시각화: 유사도 차트
     if len(result_df) > 1:
         st.subheader("유사도 분포")
@@ -150,7 +182,8 @@ def display_search_results(result_df):
             "유사도": result_df["유사도"].astype(float)
         })
         st.bar_chart(chart_data.set_index("순위"))
-
+        
+    return None
 # 시각화 유틸리티 함수
 def get_embeddings_data(collection, all_data, max_docs):
     """컬렉션에서 임베딩 데이터를 가져오는 함수"""

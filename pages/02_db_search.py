@@ -160,6 +160,19 @@ def render_search_tab():
     # 검색 버튼
     search_button = st.button("검색", type="primary")
     
+    # 검색 결과 저장 세션 상태
+    if 'last_search_results' not in st.session_state:
+        st.session_state.last_search_results = None
+    
+    # 삭제 성공 메시지 세션 상태
+    if 'delete_success_message' not in st.session_state:
+        st.session_state.delete_success_message = None
+    
+    # 삭제 성공 메시지 표시 (있을 경우)
+    if st.session_state.delete_success_message:
+        st.success(st.session_state.delete_success_message)
+        st.session_state.delete_success_message = None
+    
     # 검색 실행
     if search_button and query:
         with st.spinner("검색 중..."):
@@ -170,11 +183,77 @@ def render_search_tab():
                 # 검색 실행
                 result_df = db_search_utils.search_collection(collection, query, n_results=n_results)
                 
+                # 검색 결과 저장 (삭제 기능을 위해)
+                st.session_state.last_search_results = result_df
+                
                 # 검색 결과 표시
-                db_search_utils.display_search_results(result_df)
+                selected_docs = db_search_utils.display_search_results(result_df)
+                
+                # 선택한 문서 삭제 처리
+                if selected_docs is not None and not selected_docs.empty:
+                    delete_selected_documents(selected_docs)
                 
             except Exception as e:
                 st.error(f"검색 중 오류가 발생했습니다: {str(e)}")
+    elif st.session_state.last_search_results is not None:
+        # 이전 검색 결과 재표시
+        selected_docs = db_search_utils.display_search_results(st.session_state.last_search_results)
+        
+        # 선택한 문서 삭제 처리
+        if selected_docs is not None and not selected_docs.empty:
+            delete_selected_documents(selected_docs)
+
+# 선택한 문서를 삭제하는 함수
+def delete_selected_documents(selected_docs):
+    """선택한 문서를 컬렉션에서 삭제하는 함수"""
+    try:
+        # 이미 로드된 컬렉션 사용
+        collection = st.session_state.chroma_collection
+        
+        # 선택된 문서의 ID 추출 (결과에 ID가 없는 경우 처리)
+        if "ID" in selected_docs.columns:
+            doc_ids = selected_docs["ID"].tolist()
+        else:
+            # 선택된 문서의 내용으로 ID 찾기
+            docs_to_delete = selected_docs["내용"].tolist()
+            # 컬렉션에서 모든 문서 가져와서 내용이 일치하는 것의 ID 찾기
+            all_docs, all_data = db_search_utils.load_collection_data(collection)
+            if all_docs is not None:
+                doc_ids = []
+                for doc in docs_to_delete:
+                    # 내용이 일치하는 문서의 ID 찾기
+                    matching_rows = all_docs[all_docs["내용"] == doc]
+                    if not matching_rows.empty:
+                        for _, row in matching_rows.iterrows():
+                            doc_ids.append(row["ID"])
+            else:
+                st.error("문서 ID를 찾을 수 없어 삭제할 수 없습니다.")
+                return
+        
+        if not doc_ids:
+            st.error("삭제할 문서의 ID를 찾을 수 없습니다.")
+            return
+        
+        # 문서 삭제 확인
+        with st.spinner(f"{len(doc_ids)}개 문서 삭제 중..."):
+            collection.delete(ids=doc_ids)
+            
+            # 성공 메시지 설정
+            st.session_state.delete_success_message = f"{len(doc_ids)}개 문서가 성공적으로 삭제되었습니다."
+            
+            # 마지막 검색 결과에서 삭제된 문서 제거
+            if st.session_state.last_search_results is not None:
+                # 내용 기반으로 삭제된 문서 필터링
+                contents_to_delete = selected_docs["내용"].tolist()
+                st.session_state.last_search_results = st.session_state.last_search_results[
+                    ~st.session_state.last_search_results["내용"].isin(contents_to_delete)
+                ]
+                
+            # 페이지 리프레시 (최신 Streamlit 버전 호환성)
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"문서 삭제 중 오류가 발생했습니다: {str(e)}")
 
 # 시각화 탭 UI
 def render_visualization_tab(selected_collection):
