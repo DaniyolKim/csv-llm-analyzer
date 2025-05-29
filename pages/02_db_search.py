@@ -339,14 +339,14 @@ def render_visualization_tab(selected_collection):
                     # 클러스터 통계 시각화
                     db_search_utils.visualize_cluster_statistics(viz_data, n_clusters)
                     
+                    # 클러스터별 주요 문서 표시
+                    db_search_utils.display_cluster_documents(viz_data, n_clusters)
+                    
                     # 클러스터별 WordCloud 표시
                     db_search_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
                     
                     # 클러스터별 LDA 토픽 모델링 표시
                     db_search_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
-                    
-                    # 클러스터별 주요 문서 표시
-                    db_search_utils.display_cluster_documents(viz_data, n_clusters)
                 else:
                     st.info("컬렉션에 데이터가 없습니다.")
             
