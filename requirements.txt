@@ -13,3 +13,4 @@ konlpy
 matplotlib
 gensim
 pyLDAvis
+networkx

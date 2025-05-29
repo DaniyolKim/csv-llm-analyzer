@@ -3,7 +3,11 @@
 """
 import re
 import kss
+import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
+from collections import Counter
+from sklearn.feature_extraction.text import TfidfVectorizer
+import networkx as nx
 
 # 한국어 불용어 리스트 (중앙 관리)
 KOREAN_STOPWORDS = [
@@ -20,6 +24,13 @@ KOREAN_STOPWORDS = [
     # extract_keywords 함수에 있던 불용어 추가 (중복 제거됨)
     '이다', '돼다', '및', '에서', '에게', '으로', '으로써', '로써', '를', '저런', '그러한', '이러한', '저러한', '이렇게'
 ]
+
+# 보존할 중요 1글자 명사 목록
+IMPORTANT_SINGLE_CHAR_NOUNS = {
+    '물', '불', '밥', '집', '꿈', '말', '옷', '땀', '차', '술', '꽃', '돈', '눈', '귀', '손', '발', '코',
+    '입', '빛', '꿀', '약', '솜', '털', '피', '잠', '힘', '김', '국', '밤', '낮', '죽', '쑥', '점', '숲',
+    '책', '병', '강', '산', '바다', '풀', '길', '몸', '삶', '팔', '짐', '봄', '여름', '가을', '겨울'
+}
 
 def clean_text(text):
     """
@@ -129,35 +140,162 @@ def chunk_text_semantic(text: str, chunk_size: int = 500, chunk_overlap: int = 5
                 break
         return chunks
 
-def extract_keywords(text: str, top_n: int = 10) -> List[str]:
+def extract_keywords_advanced(text: str, top_n: int = 10, method: str = "tfidf") -> List[str]:
     """
-    텍스트에서 주요 키워드를 추출합니다.
+    향상된 키워드 추출 함수.
+    다양한 방법(TF-IDF, TextRank, 하이브리드)을 지원합니다.
+    중요 1글자 명사도 포함합니다.
     
     Args:
         text (str): 키워드를 추출할 텍스트
-        top_n (int): 추출할 키워드 수
+        top_n (int): 추출할 키워드 수, 기본값은 10
+        method (str): 키워드 추출 방법 ("tfidf", "textrank", "hybrid")
         
     Returns:
         List[str]: 추출된 키워드 목록
     """
     try:
-        # 단어 분리 (한글, 영문, 숫자만 포함)
-        words = re.findall(r'[\w가-힣]+', text.lower())
+        from konlpy.tag import Okt
+        okt = Okt()
         
-        # 중앙 관리되는 불용어 목록을 set으로 변환하여 사용 (효율적인 검색)
-        stopwords_set = set(KOREAN_STOPWORDS)
+        # 텍스트 전처리
+        cleaned_text = clean_text(text)
         
-        filtered_words = [word for word in words if len(word) >= 2 and word not in stopwords_set]
+        # 명사 추출 및 필터링 (중요 1글자 명사 포함)
+        all_nouns = okt.nouns(cleaned_text)
         
-        # 빈도 계산
-        word_freq = {}
-        for word in filtered_words:
-            word_freq[word] = word_freq.get(word, 0) + 1
+        # 명사 필터링:
+        # 1. 불용어 제거
+        # 2. 2글자 이상 단어는 모두 포함
+        # 3. 1글자 단어는 중요 1글자 명사 목록에 있는 것만 포함
+        nouns = [noun for noun in all_nouns if 
+                (noun not in KOREAN_STOPWORDS) and 
+                (len(noun) >= 2 or noun in IMPORTANT_SINGLE_CHAR_NOUNS)]
         
-        # 빈도 기준 정렬 및 상위 키워드 추출
-        sorted_keywords = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
-        return [word for word, _ in sorted_keywords[:top_n]]
-    
+        if not nouns:
+            return []
+            
+        # 방법에 따라 키워드 추출
+        if method == "tfidf":
+            return _extract_keywords_tfidf(nouns, top_n)
+        elif method == "textrank":
+            return _extract_keywords_textrank(nouns, cleaned_text, top_n)
+        elif method == "hybrid":
+            return _extract_keywords_hybrid(nouns, cleaned_text, top_n)
+        else:
+            # 기본 방법 (빈도 기반)
+            word_counts = Counter(nouns)
+            return [word for word, _ in word_counts.most_common(top_n)]
+            
     except Exception as e:
-        print(f"키워드 추출 중 오류 발생: {e}")
-        return []
+        print(f"고급 키워드 추출 중 오류 발생: {e}")
+        # 오류 발생 시 기존 방식으로 폴백
+        return extract_keywords(text, top_n)
+
+def _extract_keywords_tfidf(nouns: List[str], top_n: int) -> List[str]:
+    """TF-IDF를 이용한 키워드 추출"""
+    # 단어 빈도수 계산
+    word_counts = Counter(nouns)
+    
+    # 전체 단어 수
+    total_words = len(nouns)
+    
+    # 고유 단어 목록
+    unique_words = list(word_counts.keys())
+    
+    # 문서를 단일 문서로 간주하고 TF-IDF 계산
+    tfidf_dict = {}
+    
+    # 단어별 TF 계산 (단어 빈도 / 전체 단어 수)
+    for word in unique_words:
+        tf = word_counts[word] / total_words
+        # IDF는 단일 문서에서는 의미가 없으므로 TF만 사용
+        tfidf_dict[word] = tf
+    
+    # TF-IDF 값으로 정렬하여 상위 키워드 추출
+    sorted_keywords = sorted(tfidf_dict.items(), key=lambda x: x[1], reverse=True)
+    return [word for word, _ in sorted_keywords[:top_n]]
+
+def _extract_keywords_textrank(nouns: List[str], text: str, top_n: int) -> List[str]:
+    """TextRank 알고리즘을 이용한 키워드 추출"""
+    # 단어 중복 제거
+    unique_nouns = list(set(nouns))
+    
+    # 단어 수가 너무 적으면 빈도 기반 추출로 대체
+    if len(unique_nouns) < 4:
+        word_counts = Counter(nouns)
+        return [word for word, _ in word_counts.most_common(top_n)]
+    
+    # 동시 출현 행렬 생성 (window size = 2)
+    window_size = 2
+    co_occurrence_matrix = np.zeros((len(unique_nouns), len(unique_nouns)))
+    
+    # 동시 출현 계산
+    word_to_idx = {word: i for i, word in enumerate(unique_nouns)}
+    for i in range(len(nouns) - window_size + 1):
+        window = nouns[i:i + window_size]
+        for word1 in window:
+            if word1 not in unique_nouns:
+                continue
+            for word2 in window:
+                if word2 not in unique_nouns or word1 == word2:
+                    continue
+                idx1, idx2 = word_to_idx[word1], word_to_idx[word2]
+                co_occurrence_matrix[idx1, idx2] += 1
+    
+    # 그래프 생성
+    graph = nx.from_numpy_array(co_occurrence_matrix)
+    
+    # TextRank 알고리즘 적용
+    scores = nx.pagerank(graph)
+    
+    # 점수순으로 정렬
+    ranked_words = sorted(((scores[i], unique_nouns[i]) for i in range(len(unique_nouns))), 
+                          reverse=True)
+    
+    # 상위 키워드 반환
+    return [word for _, word in ranked_words[:top_n]]
+
+def _extract_keywords_hybrid(nouns: List[str], text: str, top_n: int) -> List[str]:
+    """TF-IDF와 TextRank를 결합한 하이브리드 방식"""
+    # TF-IDF 키워드 추출
+    tfidf_keywords = _extract_keywords_tfidf(nouns, top_n * 2)
+    
+    # 단어 수가 충분하면 TextRank도 적용
+    try:
+        textrank_keywords = _extract_keywords_textrank(nouns, text, top_n * 2)
+        
+        # 결과 결합 및 순위 계산
+        combined_keywords = {}
+        
+        # TF-IDF 결과에 가중치 부여
+        for i, keyword in enumerate(tfidf_keywords):
+            score = (len(tfidf_keywords) - i) / len(tfidf_keywords)
+            combined_keywords[keyword] = combined_keywords.get(keyword, 0) + score * 0.6
+        
+        # TextRank 결과에 가중치 부여
+        for i, keyword in enumerate(textrank_keywords):
+            score = (len(textrank_keywords) - i) / len(textrank_keywords)
+            combined_keywords[keyword] = combined_keywords.get(keyword, 0) + score * 0.4
+        
+        # 결합 점수로 정렬
+        sorted_combined = sorted(combined_keywords.items(), key=lambda x: x[1], reverse=True)
+        return [word for word, _ in sorted_combined[:top_n]]
+    except:
+        # TextRank 실패 시 TF-IDF 결과만 사용
+        return tfidf_keywords[:top_n]
+
+def extract_keywords(text: str, top_n: int = 10) -> List[str]:
+    """
+    텍스트에서 주요 키워드를 추출합니다.
+    OKT를 사용하여 명사만 추출하고, 가변적인 키워드 수를 지원합니다.
+    
+    Args:
+        text (str): 키워드를 추출할 텍스트
+        top_n (int): 추출할 키워드 수, 기본값은 10
+        
+    Returns:
+        List[str]: 추출된 키워드 목록
+    """
+    # 상위 호환성을 위해 advanced 방식으로 대체
+    return extract_keywords_advanced(text, top_n, method="hybrid")

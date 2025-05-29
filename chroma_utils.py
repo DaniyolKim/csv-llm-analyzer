@@ -319,7 +319,28 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
                         
                     # 키워드 추출 (메타데이터로 저장)
                     try:
-                        keywords = extract_keywords(chunk, top_n=5)
+                        # 청크의 길이와 문장 수에 따라 키워드 추출 개수 동적 조절
+                        text_length = len(chunk)
+                        
+                        # 문장 수 계산 (마침표, 물음표, 느낌표 기준)
+                        import re
+                        sentences = re.split(r'[.!?]+', chunk)
+                        sentences = [s.strip() for s in sentences if s.strip()]
+                        sentence_count = len(sentences)
+                        
+                        # 텍스트 길이와 문장 수에 따른 키워드 수 계산
+                        # 기본값 5개, 텍스트가 길거나 문장이 많으면 증가
+                        if text_length < 100:  # 매우 짧은 텍스트
+                            keywords_count = max(2, min(3, sentence_count))
+                        elif text_length < 300:  # 짧은 텍스트
+                            keywords_count = max(3, min(5, sentence_count))
+                        elif text_length < 800:  # 중간 길이 텍스트
+                            keywords_count = max(5, min(8, sentence_count))
+                        else:  # 긴 텍스트
+                            keywords_count = max(8, min(12, sentence_count))
+                        
+                        # 키워드 추출 (동적으로 결정된 개수)
+                        keywords = extract_keywords(chunk, top_n=keywords_count)
                         keywords_str = ", ".join(keywords)
                     except Exception as e:
                         logger.warning(f"키워드 추출 중 오류 발생: {e}")
