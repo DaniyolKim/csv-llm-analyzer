@@ -267,12 +267,23 @@ def create_cluster_visualization(viz_data, n_clusters):
         colors.extend(colors)
     colors = colors[:n_clusters]
     
+    # 텍스트 길이 제한 함수
+    def truncate_text(text, max_length=200):
+        """텍스트를 지정된 길이로 제한하고 줄바꿈 추가"""
+        if len(text) <= max_length:
+            # 80자마다 줄바꿈 추가
+            return '<br>'.join([text[i:i+80] for i in range(0, len(text), 80)])
+        return '<br>'.join([text[:max_length][i:i+80] for i in range(0, len(text[:max_length]), 80)]) + "..."
+    
     # 그래프 생성
     fig = go.Figure()
     
     # 클러스터별로 점 추가
     for cluster_id in range(n_clusters):
         cluster_data = viz_data[viz_data['cluster'] == cluster_id]
+        
+        # 텍스트 길이 제한 적용
+        hover_texts = [truncate_text(text) for text in cluster_data['text']]
         
         fig.add_trace(go.Scatter(
             x=cluster_data['x'],
@@ -284,7 +295,7 @@ def create_cluster_visualization(viz_data, n_clusters):
                 line=dict(width=1, color='DarkSlateGrey')
             ),
             name=f'클러스터 {cluster_id}',
-            text=cluster_data['text'],
+            text=hover_texts,
             hoverinfo='text',
             hovertemplate='<b>출처:</b> %{customdata}<br><b>내용:</b> %{text}<extra></extra>',
             customdata=cluster_data['source']
@@ -295,10 +306,17 @@ def create_cluster_visualization(viz_data, n_clusters):
         title='문서 클러스터 시각화 (t-SNE + K-means)',
         xaxis=dict(title='t-SNE 차원 1', showgrid=True),
         yaxis=dict(title='t-SNE 차원 2', showgrid=True),
-        hovermode='closest',
+        hovermode='closest',  # 호버 모드 설정 (closest: 가장 가까운 포인트만)
         legend_title='클러스터',
         width=800,
-        height=600
+        height=600,
+        # 호버 모드와 호버 정보 스타일 지정
+        hoverlabel=dict(
+            font_size=12,
+            font_family="Arial",
+            # 호버 정보의 최대 너비 지정
+            namelength=-1  # 호버 라벨 이름 길이 제한 없음
+        )
     )
     
     # 그래프 표시
