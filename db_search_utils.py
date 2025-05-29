@@ -541,12 +541,91 @@ def visualize_lda_topics(lda_model, corpus, dictionary):
     """LDA 토픽을 시각화"""
     # pyLDAvis로 시각화
     try:
+        # λ(lambda) 값을 0.6으로 설정(기본값은 1.0)
+        lambda_step = 0.6
         vis_data = pyLDAvis.gensim_models.prepare(
-            lda_model, corpus, dictionary, mds='mmds'
+            lda_model, corpus, dictionary, mds='mmds', lambda_step=lambda_step
         )
         
-        # HTML 시각화 생성
+        # λ(lambda) 초기값 설정을 위한 JavaScript 코드 추가
         html_vis = pyLDAvis.prepared_data_to_html(vis_data)
+        
+        # JavaScript를 통해 초기 lambda 값을 0.6으로 설정하고
+        # 좌측 클러스터 영역 표시 문제 해결을 위한 CSS 조정
+        lambda_script = """
+        <script>
+        // 페이지 로드 후 실행
+        document.addEventListener('DOMContentLoaded', function() {
+            // LDAvis가 로드되면 lambda 값을 0.6으로 설정
+            if (typeof LDAvis !== 'undefined' && LDAvis._vis_instance) {
+                // 약간의 지연을 주어 LDAvis가 완전히 로드되도록 함
+                setTimeout(function() {
+                    // lambda 슬라이더 요소 찾기 시도
+                    var lambdaInput = document.querySelector('input.lambda');
+                    if (lambdaInput) {
+                        // lambda 값을 0.6으로 설정하고 변경 이벤트 발생
+                        lambdaInput.value = 0.6;
+                        // 변경 이벤트를 트리거하여 시각화 업데이트
+                        var event = new Event('input', {
+                            'bubbles': true,
+                            'cancelable': true
+                        });
+                        lambdaInput.dispatchEvent(event);
+                    }
+                    
+                    // 좌측 클러스터 영역이 잘리는 문제를 해결하기 위한 CSS 조정
+                    var ldavisElement = document.getElementById('ldavis_el');
+                    if (ldavisElement) {
+                        // 컨테이너 너비와 좌측 마진 조정 (더 많은 여백 확보)
+                        ldavisElement.style.width = '100%';
+                        ldavisElement.style.marginLeft = '60px'; // 40px에서 60px로 증가
+                        
+                        // SVG 요소 찾기 및 업데이트
+                        var svgElements = document.querySelectorAll('#ldavis_el svg');
+                        svgElements.forEach(function(svg) {
+                            // viewBox 재설정으로 좌측 영역 표시
+                            var viewBox = svg.getAttribute('viewBox');
+                            if (viewBox) {
+                                var values = viewBox.split(' ').map(Number);
+                                // x 시작 좌표를 왼쪽으로 더 확장 (-30에서 -60으로)
+                                values[0] = -60;
+                                // 너비를 확장
+                                values[2] += 60;
+                                svg.setAttribute('viewBox', values.join(' '));
+                            }
+                            
+                            // 너비 조정
+                            svg.style.width = '100%';
+                            
+                            // 추가: 왼쪽 영역이 더 잘 보이도록 SVG 요소 조정
+                            var leftGroup = svg.querySelector('.left-axis');
+                            if (leftGroup) {
+                                leftGroup.setAttribute('transform', 'translate(60, 0)');
+                            }
+                            
+                            // 추가: 원 그룹의 위치 조정
+                            var circleGroup = svg.querySelector('.scatter');
+                            if (circleGroup) {
+                                // 현재 transform 값을 가져와서 X 좌표값만 증가시킴
+                                var transform = circleGroup.getAttribute('transform');
+                                if (transform && transform.startsWith('translate(')) {
+                                    var coords = transform.substring(10, transform.length - 1).split(',');
+                                    var x = parseFloat(coords[0]) + 30; // X 좌표 30px 증가
+                                    var y = parseFloat(coords[1]);
+                                    circleGroup.setAttribute('transform', `translate(${x},${y})`);
+                                }
+                            }
+                        });
+                    }
+                }, 1000); // 1초 지연
+            }
+        });
+        </script>
+        """
+        
+        # HTML에 스크립트 추가
+        html_vis = html_vis.replace('</body>', lambda_script + '</body>')
+        
         return html_vis
     except Exception as e:
         st.error(f"LDA 시각화 중 오류 발생: {str(e)}")
@@ -608,20 +687,27 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
             with st.spinner("인터랙티브 시각화 생성 중..."):
                 html_vis = visualize_lda_topics(lda_model, corpus, dictionary)
                 if html_vis:
-                    # 고정 너비 대신 use_container_width=True를 사용하여 반응형 디자인 적용
-                    html_height = 600  # 높이는 고정
+                    # 높이는 고정, 너비는 반응형
+                    html_height = 900
+                    
+                    # 좌측 영역이 잘리지 않도록 패딩과 여백 추가
+                    html_vis = html_vis.replace(
+                        '<div id="ldavis_el"', 
+                        '<div id="ldavis_el" style="padding-left: 40px; box-sizing: border-box;"'
+                    )
                     
                     # HTML 내부의 width 속성을 100%로 수정하여 반응형으로 만듦
                     html_vis = html_vis.replace('width="100%"', 'width="100%"').replace('height="530px"', f'height="{html_height}px"')
                     
                     # iframe 태그를 이용해 HTML 시각화를 반응형으로 표시
+                    # 외부 컨테이너에 패딩을 추가하여 좌측 영역이 잘리지 않도록 함
                     st.components.v1.html(
                         f"""
-                        <div style="width:100%;">
+                        <div style="width:100%; padding-left: 20px; box-sizing: border-box; overflow-x: visible;">
                             {html_vis}
                         </div>
                         """, 
-                        height=html_height,
+                        height=html_height + 50, # 높이를 약간 증가
                         scrolling=True
                     )
                 else:
