@@ -609,7 +609,7 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
                 html_vis = visualize_lda_topics(lda_model, corpus, dictionary)
                 if html_vis:
                     # 고정 너비 대신 use_container_width=True를 사용하여 반응형 디자인 적용
-                    html_height = 600  # 높이는 고정
+                    html_height = 900  # 높이는 고정
                     
                     # HTML 내부의 width 속성을 100%로 수정하여 반응형으로 만듦
                     html_vis = html_vis.replace('width="100%"', 'width="100%"').replace('height="530px"', f'height="{html_height}px"')
