@@ -560,6 +560,7 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
         return
         
     st.subheader("클러스터별 LDA 토픽 모델링")
+    st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
     
     # 폰트 경로 설정을 위한 변수 정의
     preferred_fonts = ['NanumGothic', 'Malgun Gothic', 'AppleGothic', 'Noto Sans KR']
@@ -596,32 +597,33 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
                 st.write("LDA 모델 학습에 실패했습니다.")
                 continue
             
-            # 토픽 표시
-            st.subheader(f"클러스터 {cluster_id}의 주요 토픽")
-            topics = display_lda_topics(lda_model)
-            
-            for topic in topics:
-                st.write(f"**토픽 {topic['topic_id']}**: " + ", ".join(topic['words']))
-            
-            # 인터랙티브 LDA 시각화 (PyLDAvis)
+            # 인터랙티브 LDA 시각화 (PyLDAvis) - 주요 토픽 표시 부분 삭제
             st.subheader(f"클러스터 {cluster_id}의 인터랙티브 토픽 시각화")
             with st.spinner("인터랙티브 시각화 생성 중..."):
+                # 사용자가 선택한 lambda 값을 visualize_lda_topics 함수에 전달
                 html_vis = visualize_lda_topics(lda_model, corpus, dictionary)
                 if html_vis:
-                    # 고정 너비 대신 use_container_width=True를 사용하여 반응형 디자인 적용
-                    html_height = 900  # 높이는 고정
+                    # 높이는 고정, 너비는 반응형
+                    html_height = 900
+                    
+                    # 좌측 영역이 잘리지 않도록 패딩과 여백 추가
+                    html_vis = html_vis.replace(
+                        '<div id="ldavis_el"', 
+                        '<div id="ldavis_el" style="padding-left: 40px; box-sizing: border-box;"'
+                    )
                     
                     # HTML 내부의 width 속성을 100%로 수정하여 반응형으로 만듦
                     html_vis = html_vis.replace('width="100%"', 'width="100%"').replace('height="530px"', f'height="{html_height}px"')
                     
                     # iframe 태그를 이용해 HTML 시각화를 반응형으로 표시
+                    # 외부 컨테이너에 패딩을 추가하여 좌측 영역이 잘리지 않도록 함
                     st.components.v1.html(
                         f"""
-                        <div style="width:100%;">
+                        <div style="width:100%; padding-left: 20px; box-sizing: border-box; overflow-x: visible;">
                             {html_vis}
                         </div>
                         """, 
-                        height=html_height,
+                        height=html_height + 50, # 높이를 약간 증가
                         scrolling=True
                     )
                 else:
