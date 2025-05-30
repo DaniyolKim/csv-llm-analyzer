@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, silhouette_samples
 from wordcloud import WordCloud
 from konlpy.tag import Okt
 import matplotlib.pyplot as plt
@@ -628,3 +629,152 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
                     )
                 else:
                     st.write("인터랙티브 시각화를 생성할 수 없습니다.")
+
+def find_optimal_clusters(embeddings, max_clusters=10):
+    """
+    실루엣 스코어를 사용하여 최적의 클러스터 수를 찾기 위한 함수
+    
+    실루엣 스코어는 클러스터의 품질을 평가하는 지표로, -1에서 1 사이의 값을 가집니다.
+    - 1에 가까울수록: 데이터가 자신이 속한 클러스터와 잘 맞고, 다른 클러스터와는 잘 분리됨
+    - 0에 가까울수록: 데이터가 클러스터 경계에 위치함
+    - -1에 가까울수록: 데이터가 잘못된 클러스터에 배정됨
+    
+    Args:
+        embeddings: 임베딩 배열
+        max_clusters: 분석할 최대 클러스터 수
+        
+    Returns:
+        (pd.DataFrame, dict): 클러스터 수별 실루엣 스코어 데이터프레임, 최적 클러스터 정보
+    """
+    iters = []
+    silhouette_avg = []
+    
+    # 클러스터 수에 따른 실루엣 스코어 계산
+    for n_clusters in range(2, max_clusters + 1):
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
+        cluster_labels = kmeans.fit_predict(embeddings)
+        
+        # 실루엣 스코어 계산
+        silhouette_avg.append(silhouette_score(embeddings, cluster_labels))
+        iters.append(n_clusters)
+    
+    # 결과 데이터프레임 생성
+    cluster_silhouette_df = pd.DataFrame({
+        '클러스터 수': iters,
+        '실루엣 스코어': silhouette_avg
+    })
+    
+    # 최적의 클러스터 수 찾기 (실루엣 스코어가 가장 높은 지점)
+    optimal_clusters = cluster_silhouette_df.loc[cluster_silhouette_df['실루엣 스코어'].idxmax()]
+    
+    return cluster_silhouette_df, optimal_clusters
+
+def plot_elbow_method(silhouette_df):
+    """
+    엘보우 방법 결과를 시각화하는 함수
+    
+    엘보우 방법(Elbow Method)은 클러스터 내 분산(또는 실루엣 스코어)을 기준으로 
+    최적의 클러스터 수를 결정하는 방법입니다.
+    그래프에서 급격한 변화가 일어나는 '팔꿈치' 지점이 최적 클러스터 수를 나타냅니다.
+    
+    Args:
+        silhouette_df: 클러스터 수별 실루엣 스코어 데이터프레임
+    """
+    st.subheader("엘보우 방법에 의한 최적 클러스터 수")
+    
+    # 도움말 표시
+    with st.expander("엘보우 방법과 실루엣 스코어 이해하기", expanded=True):
+        st.markdown("""
+        ### 엘보우 방법(Elbow Method)
+        클러스터 개수를 결정하기 위한 시각적 방법으로, 클러스터 수에 따른 성능 지표(여기서는 실루엣 스코어)를 
+        그래프로 그려 급격한 변화가 일어나는 '팔꿈치' 지점을 찾는 방법입니다.
+        
+        ### 실루엣 스코어(Silhouette Score)
+        각 데이터 포인트가 자신의 클러스터와 얼마나 잘 맞는지, 그리고 다른 클러스터와 얼마나 잘 분리되는지를 측정합니다.
+        
+        - **값의 범위**: -1(최악) ~ 1(최상)
+        - **해석**:
+          - 1에 가까울수록: 데이터가 자신의 클러스터와 잘 맞고, 다른 클러스터와 잘 분리됨
+          - 0에 가까울수록: 데이터가 클러스터 경계에 위치함
+          - -1에 가까울수록: 데이터가 잘못된 클러스터에 배정됨
+          
+        ### 최적 클러스터 수 결정
+        실루엣 스코어가 가장 높은 클러스터 수가 데이터의 자연스러운 군집 구조를 가장 잘 표현하는 것으로 판단합니다.
+        """)
+    
+    fig = go.Figure()
+    
+    # 실루엣 스코어 선 그래프
+    fig.add_trace(go.Scatter(
+        x=silhouette_df['클러스터 수'],
+        y=silhouette_df['실루엣 스코어'],
+        mode='lines+markers',
+        marker=dict(size=10, color='blue'),
+        line=dict(width=2),
+        name='실루엣 스코어'
+    ))
+    
+    # 최적 클러스터 수 점 표시
+    optimal_point = silhouette_df.loc[silhouette_df['실루엣 스코어'].idxmax()]
+    fig.add_trace(go.Scatter(
+        x=[optimal_point['클러스터 수']],
+        y=[optimal_point['실루엣 스코어']],
+        mode='markers',
+        marker=dict(size=12, color='red', symbol='x'),
+        name='최적 클러스터 수'
+    ))
+    
+    # 레이아웃 설정
+    fig.update_layout(
+        title='엘보우 방법: 클러스터 수에 따른 실루엣 스코어',
+        xaxis=dict(title='클러스터 수'),
+        yaxis=dict(title='실루엣 스코어'),
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+def display_optimal_cluster_info(optimal_clusters):
+    """최적 클러스터 수 정보 표시"""
+    st.subheader("최적 클러스터 수")
+    
+    # 최적 클러스터 정보 표시
+    st.write(f"최적의 클러스터 수는 **{optimal_clusters['클러스터 수']}** 개입니다.")
+    st.write(f"해당 클러스터 수에서의 실루엣 스코어: **{optimal_clusters['실루엣 스코어']:.4f}**")
+    
+    # 실루엣 스코어에 대한 해석 추가
+    score = optimal_clusters['실루엣 스코어']
+    
+    st.subheader("결과 해석")
+    if score > 0.7:
+        st.success("실루엣 스코어가 0.7 이상으로 매우 강한 클러스터 구조를 가지고 있습니다.")
+        st.write("데이터가 자연스럽게 잘 분리된 군집 구조를 가지고 있으며, 각 클러스터가 명확하게 구분됩니다.")
+    elif score > 0.5:
+        st.success("실루엣 스코어가 0.5 이상으로 합리적인 클러스터 구조를 가지고 있습니다.")
+        st.write("데이터가 비교적 잘 분리된 군집 구조를 가지고 있으며, 클러스터 간 구분이 양호합니다.")
+    elif score > 0.3:
+        st.warning("실루엣 스코어가 0.3~0.5 사이로 약한 클러스터 구조를 가지고 있습니다.")
+        st.write("클러스터 간 일부 중첩이 있을 수 있으나, 전반적으로 의미 있는 패턴이 발견됩니다.")
+    else:
+        st.error("실루엣 스코어가 0.3 미만으로 클러스터 구조가 불분명합니다.")
+        st.write("데이터에 명확한 자연스러운 군집이 없거나, 선택한 임베딩 방법이 데이터의 특성을 잘 반영하지 못할 수 있습니다.")
+    
+    st.write("### 최적 클러스터 수가 의미하는 것")
+    st.write("""
+    이 최적의 클러스터 수는 데이터의 자연스러운 군집 구조를 가장 잘 표현하는 값입니다. 
+    이상적인 클러스터링에서는:
+    
+    1. **동일 클러스터 내 문서**는 서로 유사한 주제나 내용을 가집니다.
+    2. **다른 클러스터의 문서**는 서로 다른 주제나 내용을 가집니다.
+    3. **각 클러스터**는 고유한 특성이나 주제를 대표합니다.
+    
+    클러스터 수가 너무 적으면 다른 주제의 문서들이 하나의 클러스터에 포함되고, 
+    클러스터 수가 너무 많으면 유사한 주제의 문서들이 여러 클러스터로 불필요하게 분리됩니다.
+    """)
+    
+    st.write("### 클러스터 분석 활용 방법")
+    st.write("""
+    - 클러스터별 WordCloud와 주요 문서를 검토하여 각 클러스터의 핵심 주제를 파악하세요.
+    - LDA 토픽 모델링 결과를 통해 각 클러스터 내의 세부 주제 구조를 확인하세요.
+    - 클러스터 간 비교를 통해 데이터의 전체적인 구조와 패턴을 이해하세요.
+    """)

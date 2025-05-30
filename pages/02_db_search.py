@@ -261,15 +261,43 @@ def render_visualization_tab(selected_collection):
     
     # 시각화 설정
     with st.expander("시각화 설정", expanded=True):
-        # 클러스터 수 설정
-        n_clusters = st.slider(
-            "클러스터 수",
-            min_value=2,
-            max_value=20,
-            value=5,
-            step=1,
-            help="문서를 그룹화할 클러스터의 수를 설정합니다."
+        # 자동 최적 클러스터 수 찾기 옵션
+        find_optimal = st.checkbox(
+            "최적 클러스터 수 자동 찾기", 
+            value=False,
+            help="실루엣 스코어를 사용하여 최적의 클러스터 수를 자동으로 찾습니다."
         )
+        
+        if find_optimal:
+            # 최대 클러스터 수 설정
+            max_clusters = st.slider(
+                "최대 클러스터 수",
+                min_value=3,
+                max_value=20,
+                value=10,
+                step=1,
+                help="검색할 최대 클러스터 수를 설정합니다."
+            )
+            # 클러스터 수를 비활성화 표시용으로만 설정
+            n_clusters = st.slider(
+                "클러스터 수",
+                min_value=2,
+                max_value=20,
+                value=5,
+                step=1,
+                help="자동 찾기 옵션이 켜져 있어 이 설정은 무시됩니다.",
+                disabled=True
+            )
+        else:
+            # 클러스터 수 설정
+            n_clusters = st.slider(
+                "클러스터 수",
+                min_value=2,
+                max_value=20,
+                value=5,
+                step=1,
+                help="문서를 그룹화할 클러스터의 수를 설정합니다."
+            )
         
         # 최대 문서 수 설정
         max_docs = st.slider(
@@ -327,6 +355,22 @@ def render_visualization_tab(selected_collection):
                     # 임베딩 배열로 변환
                     import numpy as np
                     embeddings_array = np.array(embeddings)
+                    
+                    # 최적 클러스터 수 찾기
+                    if find_optimal:
+                        st.subheader("최적 클러스터 수 분석")
+                        with st.spinner("최적 클러스터 수 계산 중..."):
+                            silhouette_df, optimal_clusters = db_search_utils.find_optimal_clusters(embeddings_array, max_clusters)
+                            
+                            # 엘보우 방법 시각화
+                            db_search_utils.plot_elbow_method(silhouette_df)
+                            
+                            # 최적 클러스터 수 정보 표시
+                            db_search_utils.display_optimal_cluster_info(optimal_clusters)
+                            
+                            # 최적 클러스터 수를 사용하도록 설정
+                            n_clusters = int(optimal_clusters["클러스터 수"])
+                            st.success(f"최적의 클러스터 수로 {n_clusters}을(를) 사용합니다.")
                     
                     # 시각화 데이터 준비
                     viz_data = db_search_utils.prepare_visualization_data(
