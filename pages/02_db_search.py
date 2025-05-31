@@ -10,8 +10,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from chroma_utils import load_chroma_collection, get_available_collections
 from text_utils import KOREAN_STOPWORDS
 
-# 새로운 방식으로 모듈 전체를 import
+# 모듈 임포트 방식 변경
 import db_search_utils
+# 시각화 모듈 직접 임포트
+import visualization_utils
 
 st.set_page_config(
     page_title="DB 검색",
@@ -316,7 +318,15 @@ def render_visualization_tab(selected_collection):
             max_value=50,
             value=30,
             step=5,
-            help="t-SNE가 각 데이터 포인트 주변의 '유효 이웃 수'를 결정하는 값입니다. 데이터의 지역적 구조와 전역적 구조 사이의 균형에 영향을 줍니다."
+            help="""
+            t-SNE 알고리즘의 핵심 매개변수로, 각 데이터 포인트 주변의 '유효 이웃 수'를 결정합니다.
+            - 낮은 값(5~10): 지역적 구조 보존, 작은 클러스터 식별에 효과적
+            - 높은 값(30~50): 전역적 구조 보존, 데이터 전체 패턴 파악에 유리
+            - 일반적으로 10~50 사이 값 권장, 데이터셋 크기에 따라 조정
+            
+            너무 작은 값: 파편화된 클러스터 발생
+            너무 큰 값: 클러스터 간 경계가 모호해짐
+            """
         )
         
         # LDA 토픽 수 설정 추가
@@ -372,25 +382,22 @@ def render_visualization_tab(selected_collection):
                             n_clusters = int(optimal_clusters["클러스터 수"])
                             st.success(f"최적의 클러스터 수로 {n_clusters}을(를) 사용합니다.")
                     
-                    # 시각화 데이터 준비
-                    viz_data = db_search_utils.prepare_visualization_data(
+                    # 시각화 데이터 준비 부분 수정
+                    viz_data = visualization_utils.prepare_visualization_data(
                         embeddings_array, documents, ids, metadatas, perplexity, n_clusters
                     )
                     
                     # 클러스터 시각화
-                    db_search_utils.create_cluster_visualization(viz_data, n_clusters)
-                    
-                    # 클러스터 통계 시각화
-                    db_search_utils.visualize_cluster_statistics(viz_data, n_clusters)
+                    visualization_utils.create_cluster_visualization(viz_data, n_clusters)
                     
                     # 클러스터별 주요 문서 표시
-                    db_search_utils.display_cluster_documents(viz_data, n_clusters)
+                    visualization_utils.display_cluster_documents(viz_data, n_clusters)
                     
                     # 클러스터별 WordCloud 표시
-                    db_search_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
+                    visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
                     
                     # 클러스터별 LDA 토픽 모델링 표시
-                    db_search_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
+                    visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
                 else:
                     st.info("컬렉션에 데이터가 없습니다.")
             
