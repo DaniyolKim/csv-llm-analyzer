@@ -492,77 +492,59 @@ def render_visualization_tab(selected_collection):
                 st.session_state.viz_data = viz_data
                 st.session_state.n_clusters = n_clusters
                 st.session_state.viz_completed = True
-                
-                # 기본 시각화 정보를 세션 상태로 저장
-                render_visualizations(viz_data, n_clusters)
-                
-                # LDA 토픽 모델링도 함께 실행 (추가된 부분)
-                st.subheader("클러스터별 LDA 토픽 모델링")
-
-                # 기본 LDA 토픽 수 설정
-                lda_topics = 3
-                
-                # LDA 토픽 수 설정을 세션 상태에 저장
-                st.session_state.lda_topics = lda_topics
-                
-                # LDA 토픽 모델링 섹션 (클러스터링이 완료된 후에만 표시)
-                if 'viz_completed' in st.session_state and st.session_state.viz_completed:        
-                    # LDA 토픽 수 설정
-                    lda_topics = st.slider(
-                        "LDA 토픽 수",
-                        min_value=2,
-                        max_value=10,
-                        value=st.session_state.get('lda_topics', 3),  # 기본값 또는 이전에 설정한 값 사용
-                        step=1,
-                        help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
-                    )
-                    
-                    # 슬라이더 값이 변경되면 세션 상태에 저장
-                    st.session_state.lda_topics = lda_topics
-                    
-                    # 명확한 키 값을 가진 LDA 토픽 모델링 버튼
-                    if st.button("LDA 토픽 모델링 다시 실행", key="run_lda_again_btn", type="primary"):
-                        with st.spinner("LDA 토픽 모델링 중..."):
-                            try:
-                                # 세션 상태에서 데이터 가져오기
-                                viz_data = st.session_state.viz_data
-                                n_clusters = st.session_state.n_clusters
-                                
-                                # 토픽 모델링이 실행 중임을 표시
-                                st.session_state.lda_running = True
-                                
-                                # LDA 토픽 모델링만 다시 실행
-                                visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
-                                
-                                # 실행 완료 표시
-                                st.success("LDA 토픽 모델링이 완료되었습니다.")
-                            except Exception as e:
-                                st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
-                                st.exception(e)
-                            finally:
-                                # 실행 상태 초기화
-                                st.session_state.lda_running = False
-
-
-                st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
-                
-                # LDA 토픽 모델링 실행
-                with st.spinner("LDA 토픽 모델링 중..."):
-                    try:
-                        visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
-                    except Exception as e:
-                        st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
-                        st.info("LDA 토픽 모델링에는 실패했지만, 기본 시각화는 완료되었습니다.")
-                
+                st.rerun()
             except Exception as e:
                 st.error(f"시각화 생성 중 오류가 발생했습니다: {str(e)}")
                 st.exception(e)
     
     # 시각화가 이미 완료된 경우, 저장된 시각화 데이터를 다시 표시
     elif 'viz_completed' in st.session_state and st.session_state.viz_completed:
-        viz_data = st.session_state.viz_data
-        n_clusters = st.session_state.n_clusters
-        render_visualizations(viz_data, n_clusters)
+        # 시각화 데이터를 사용하여 기존 시각화 표시
+        viz_data = st.session_state.get('viz_data')
+        n_clusters = st.session_state.get('n_clusters')
+        if viz_data is not None and n_clusters is not None:
+            # 기본 시각화 표시
+            render_visualizations(viz_data, n_clusters)
+            # LDA 토픽 모델링 섹션 - 시각화 이후에 배치하여 UI 흐름 일관성 유지
+            st.subheader("클러스터별 LDA 토픽 모델링 설정")
+            with st.container():
+                lda_cols = st.columns([3, 1])
+                with lda_cols[0]:
+                    lda_topics = st.slider(
+                        "LDA 토픽 수",
+                        min_value=2,
+                        max_value=10,
+                        value=st.session_state.get('lda_topics', 3),
+                        step=1,
+                        help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다.",
+                        key="lda_topics_slider"
+                    )
+                    if 'lda_topics' not in st.session_state or st.session_state.lda_topics != lda_topics:
+                        st.session_state.lda_topics = lda_topics
+                with lda_cols[1]:
+                    st.write("")
+                    run_lda_again = st.button(
+                        "LDA 토픽 모델링 다시 실행", 
+                        key="run_lda_again_btn", 
+                        type="primary"
+                    )
+            st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
+            if run_lda_again:
+                with st.spinner("LDA 토픽 모델링 중..."):
+                    try:
+                        viz_data = st.session_state.viz_data
+                        n_clusters = st.session_state.n_clusters
+                        lda_topics = st.session_state.lda_topics
+                        st.session_state.lda_running = True
+                        visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
+                        st.success("LDA 토픽 모델링이 완료되었습니다.")
+                    except Exception as e:
+                        st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
+                        st.exception(e)
+                    finally:
+                        st.session_state.lda_running = False
+        else:
+            st.warning("시각화 데이터가 세션에 없습니다. 먼저 '시각화 생성'을 실행하세요.")
 
 # 시각화 렌더링 함수를 분리하여 재사용 가능하게 함
 def render_visualizations(viz_data, n_clusters):
