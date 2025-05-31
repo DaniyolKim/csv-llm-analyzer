@@ -356,8 +356,8 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
         st.info("pip install gensim pyLDAvis 명령으로 필요한 패키지를 설치하세요.")
         return
         
-    st.subheader("클러스터별 LDA 토픽 모델링")
-    st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
+    # st.subheader("클러스터별 LDA 토픽 모델링")
+    # st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
     
     for cluster_id in range(n_clusters):
         cluster_texts = viz_data[viz_data['cluster'] == cluster_id]['full_text'].tolist()
@@ -419,6 +419,68 @@ def display_cluster_lda(viz_data, n_clusters, stopwords, num_topics=3):
                     )
                 else:
                     st.write("인터랙티브 시각화를 생성할 수 없습니다.")
+
+def process_cluster_lda(cluster_texts, cluster_id, stopwords, num_topics=3):
+    """
+    단일 클러스터에 대한 LDA 토픽 모델링을 수행합니다. (expander 없이)
+    """
+    if not LDA_AVAILABLE:
+        st.warning("LDA 토픽 모델링을 위한 패키지(gensim, pyLDAvis)가 설치되어 있지 않습니다.")
+        st.info("pip install gensim pyLDAvis 명령으로 필요한 패키지를 설치하세요.")
+        return
+    
+    st.info(f"{len(cluster_texts)}개 문서에 대한 LDA 토픽 모델링을 수행합니다.")
+    
+    # 텍스트 전처리
+    processed_texts = preprocess_text_for_lda(cluster_texts, stopwords)
+    
+    if not processed_texts:
+        st.write("처리된 텍스트가 없습니다.")
+        return
+        
+    # LDA 모델 학습
+    with st.spinner("LDA 모델 학습 중..."):
+        # 클러스터 크기에 따라 토픽 수 조정
+        adjusted_topics = min(num_topics, max(2, len(processed_texts) // 3))
+        
+        lda_model, corpus, dictionary = train_lda_model(
+            processed_texts, 
+            num_topics=adjusted_topics
+        )
+    
+    if lda_model is None:
+        st.write("LDA 모델 학습에 실패했습니다.")
+        return
+    
+    # 인터랙티브 LDA 시각화 (PyLDAvis)
+    st.subheader("인터랙티브 토픽 시각화")
+    with st.spinner("인터랙티브 시각화 생성 중..."):
+        html_vis = visualize_lda_topics(lda_model, corpus, dictionary)
+        if html_vis:
+            # 높이는 고정, 너비는 반응형
+            html_height = 900
+            
+            # 좌측 영역이 잘리지 않도록 패딩과 여백 추가
+            html_vis = html_vis.replace(
+                '<div id="ldavis_el"', 
+                '<div id="ldavis_el" style="padding-left: 40px; box-sizing: border-box;"'
+            )
+            
+            # HTML 내부의 width 속성을 100%로 수정하여 반응형으로 만듦
+            html_vis = html_vis.replace('width="100%"', 'width="100%"').replace('height="530px"', f'height="{html_height}px"')
+            
+            # iframe 태그를 이용해 HTML 시각화를 반응형으로 표시
+            st.components.v1.html(
+                f"""
+                <div style="width:100%; padding-left: 20px; box-sizing: border-box; overflow-x: visible;">
+                    {html_vis}
+                </div>
+                """, 
+                height=html_height + 50, # 높이를 약간 증가
+                scrolling=True
+            )
+        else:
+            st.write("인터랙티브 시각화를 생성할 수 없습니다.")
 
 def find_optimal_clusters(embeddings, max_clusters=10):
     """

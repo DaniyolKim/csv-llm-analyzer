@@ -32,6 +32,13 @@ if 'current_collection_name' not in st.session_state:
     st.session_state.current_collection_name = None
 if 'current_db_path' not in st.session_state:
     st.session_state.current_db_path = None
+# 시각화 관련 세션 상태 추가
+if 'viz_completed' not in st.session_state:
+    st.session_state.viz_completed = False
+if 'viz_data' not in st.session_state:
+    st.session_state.viz_data = None
+if 'n_clusters' not in st.session_state:
+    st.session_state.n_clusters = None
 
 st.title("DB 검색")
 
@@ -329,15 +336,7 @@ def render_visualization_tab(selected_collection):
             """
         )
         
-        # LDA 토픽 수 설정 추가
-        lda_topics = st.slider(
-            "LDA 토픽 수",
-            min_value=2,
-            max_value=10,
-            value=3,
-            step=1,
-            help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
-        )
+        # LDA 토픽 수 설정은 여기서 제거하고 아래로 이동
     
     # 시각화 버튼
     if st.button("시각화 생성", key="create_viz_btn", type="primary"):
@@ -355,12 +354,12 @@ def render_visualization_tab(selected_collection):
                     st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
                     
                     # 임베딩 데이터 가져오기
-                    documents, metadatas, ids, embeddings = db_search_utils.get_embeddings_data(collection, all_data, max_docs)
+                    documents, metadatas, ids, embeddings = visualization_utils.get_embeddings_data(collection, all_data, max_docs)
                     
                     # 임베딩이 없는 경우 처리
                     if len(embeddings) == 0:
                         st.error("임베딩 데이터를 가져올 수 없습니다.")
-                        embeddings = db_search_utils.handle_missing_embeddings(collection, documents)
+                        embeddings = visualization_utils.handle_missing_embeddings(collection, documents)
                     
                     # 임베딩 배열로 변환
                     import numpy as np
@@ -370,40 +369,85 @@ def render_visualization_tab(selected_collection):
                     if find_optimal:
                         st.subheader("최적 클러스터 수 분석")
                         with st.spinner("최적 클러스터 수 계산 중..."):
-                            silhouette_df, optimal_clusters = db_search_utils.find_optimal_clusters(embeddings_array, max_clusters)
+                            silhouette_df, optimal_clusters = visualization_utils.find_optimal_clusters(embeddings_array, max_clusters)
                             
                             # 엘보우 방법 시각화
-                            db_search_utils.plot_elbow_method(silhouette_df)
+                            visualization_utils.plot_elbow_method(silhouette_df)
                             
                             # 최적 클러스터 수 정보 표시
-                            db_search_utils.display_optimal_cluster_info(optimal_clusters)
+                            visualization_utils.display_optimal_cluster_info(optimal_clusters)
                             
                             # 최적 클러스터 수를 사용하도록 설정
                             n_clusters = int(optimal_clusters["클러스터 수"])
                             st.success(f"최적의 클러스터 수로 {n_clusters}을(를) 사용합니다.")
                     
-                    # 시각화 데이터 준비 부분 수정
+                    # 시각화 데이터 준비
                     viz_data = visualization_utils.prepare_visualization_data(
                         embeddings_array, documents, ids, metadatas, perplexity, n_clusters
                     )
                     
-                    # 클러스터 시각화
-                    visualization_utils.create_cluster_visualization(viz_data, n_clusters)
+                    # 세션 상태에 시각화 데이터와 클러스터 수 저장
+                    st.session_state.viz_data = viz_data
+                    st.session_state.n_clusters = n_clusters
+                    st.session_state.viz_completed = True
                     
-                    # 클러스터별 주요 문서 표시
-                    visualization_utils.display_cluster_documents(viz_data, n_clusters)
+                    # 기본 시각화 정보를 세션 상태로 저장
+                    render_visualizations(viz_data, n_clusters)
                     
-                    # 클러스터별 WordCloud 표시
-                    visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
-                    
-                    # 클러스터별 LDA 토픽 모델링 표시
-                    visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
                 else:
                     st.info("컬렉션에 데이터가 없습니다.")
             
             except Exception as e:
                 st.error(f"시각화 생성 중 오류가 발생했습니다: {str(e)}")
                 st.exception(e)
+    
+    # 시각화가 이미 완료된 경우, 저장된 시각화 데이터를 다시 표시
+    elif 'viz_completed' in st.session_state and st.session_state.viz_completed:
+        viz_data = st.session_state.viz_data
+        n_clusters = st.session_state.n_clusters
+        render_visualizations(viz_data, n_clusters)
+
+    # LDA 토픽 모델링 섹션 (클러스터링이 완료된 후에만 표시)
+    # expander를 사용하지 않고 직접 subheader로 표시
+    if 'viz_completed' in st.session_state and st.session_state.viz_completed:
+        st.subheader("클러스터별 LDA 토픽 모델링")
+        st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
+        
+        # LDA 토픽 수 설정
+        lda_topics = st.slider(
+            "LDA 토픽 수",
+            min_value=2,
+            max_value=10,
+            value=3,
+            step=1,
+            help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
+        )
+        
+        if st.button("LDA 토픽 모델링 실행", type="primary"):
+            with st.spinner("LDA 토픽 모델링 중..."):
+                try:
+                    # 세션 상태에서 데이터 가져오기
+                    viz_data = st.session_state.viz_data
+                    n_clusters = st.session_state.n_clusters
+                    
+                    # LDA 토픽 모델링 실행 - 기존 함수를 그대로 사용
+                    # visualization_utils.display_cluster_lda 함수는 내부에서 각 클러스터별로 expander를 생성합니다
+                    visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
+                except Exception as e:
+                    st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
+                    st.exception(e)
+
+# 시각화 렌더링 함수를 분리하여 재사용 가능하게 함
+def render_visualizations(viz_data, n_clusters):
+    """시각화 데이터를 사용하여 클러스터 시각화, 문서, WordCloud를 표시"""
+    # 클러스터 시각화
+    visualization_utils.create_cluster_visualization(viz_data, n_clusters)
+    
+    # 클러스터별 주요 문서 표시
+    visualization_utils.display_cluster_documents(viz_data, n_clusters)
+    
+    # 클러스터별 WordCloud 표시
+    visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
 
 # 메인 앱 실행
 def main():
