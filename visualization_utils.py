@@ -215,13 +215,35 @@ def display_cluster_documents(viz_data, n_clusters):
 
 def generate_wordcloud_for_cluster(texts, stopwords):
     """클러스터의 텍스트에서 워드클라우드 생성"""
+    from text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
+    
     okt = Okt()
     nouns = []
+    
     for text_content in texts:
-        cleaned_text_for_nouns = clean_text(str(text_content)) # str()로 명시적 변환
-        for noun in okt.nouns(cleaned_text_for_nouns):
-            if noun not in stopwords and len(noun) > 1: # 한 글자 명사 제외
-                nouns.append(noun)
+        try:
+            # 텍스트를 문자열로 변환하고 정제
+            cleaned_text_for_nouns = clean_text(str(text_content))
+            
+            # 형태소 분석으로 명사 추출 (인코딩 오류 예외 처리 추가)
+            try:
+                extracted_nouns = okt.nouns(cleaned_text_for_nouns)
+                for noun in extracted_nouns:
+                    # 불용어가 아니고, 2글자 이상이거나 중요 한 글자 명사 목록에 있는 단어만 포함
+                    if noun not in stopwords and (len(noun) > 1 or noun in IMPORTANT_SINGLE_CHAR_NOUNS):
+                        nouns.append(noun)
+            except UnicodeDecodeError as ude:
+                # 인코딩 오류 발생 시 해당 텍스트 건너뛰기
+                print(f"인코딩 오류 발생, 텍스트 건너뛰기: {str(ude)}")
+                continue
+            except Exception as e:
+                # 기타 오류 발생 시 건너뛰기
+                print(f"명사 추출 중 오류 발생: {str(e)}")
+                continue
+                
+        except Exception as e:
+            print(f"텍스트 처리 중 오류 발생: {str(e)}")
+            continue
 
     if not nouns:
         return None
@@ -298,14 +320,16 @@ def display_cluster_wordclouds(viz_data, n_clusters, stopwords):
 # LDA 관련 함수
 def preprocess_text_for_lda(texts, stopwords):
     """LDA 모델링을 위한 텍스트 전처리"""
+    from text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
     okt = Okt()
     processed_texts = []
     
     for text in texts:
         # 텍스트 정제 및 명사 추출
         cleaned_text = clean_text(str(text))
+        # 불용어가 아니고, 2글자 이상이거나 중요 한 글자 명사 목록에 있는 단어만 포함
         nouns = [noun for noun in okt.nouns(cleaned_text) 
-                if noun not in stopwords and len(noun) > 1]
+                if noun not in stopwords and (len(noun) > 1 or noun in IMPORTANT_SINGLE_CHAR_NOUNS)]
         
         if nouns:  # 빈 리스트가 아닌 경우만 추가
             processed_texts.append(nouns)

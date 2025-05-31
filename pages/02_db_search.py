@@ -153,14 +153,22 @@ def render_collection_data_tab(selected_collection):
 def render_search_tab():
     # 검색 설정
     with st.expander("검색 설정", expanded=True):
-        # 검색 결과 수 설정
-        n_results = st.slider(
-            "검색 결과 수",
-            min_value=1,
-            max_value=50,
-            value=10,
-            step=1,
-            help="반환할 검색 결과의 최대 개수를 설정합니다."
+        # 검색 결과 수 대신 유사도 임계값 설정
+        similarity_threshold = st.slider(
+            "유사도 임계값",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            step=0.01,
+            format="%.2f",
+            help="이 값 이상의 유사도를 가진 문서만 표시합니다. 값이 클수록 검색어와 더 유사한 문서만 표시됩니다."
+        )
+        
+        # 검색 결과를 시각화에 사용할지 여부
+        use_search_for_viz = st.checkbox(
+            "검색 결과를 시각화에 사용",
+            value=False,
+            help="체크하면 검색 결과를 시각화 탭에서 사용할 수 있습니다."
         )
     
     # 검색 입력 필드
@@ -172,6 +180,10 @@ def render_search_tab():
     # 검색 결과 저장 세션 상태
     if 'last_search_results' not in st.session_state:
         st.session_state.last_search_results = None
+    
+    # 검색 결과 임베딩 저장 세션 상태 (시각화에 사용)
+    if 'search_results_for_viz' not in st.session_state:
+        st.session_state.search_results_for_viz = None
     
     # 삭제 성공 메시지 세션 상태
     if 'delete_success_message' not in st.session_state:
@@ -189,8 +201,28 @@ def render_search_tab():
                 # 이미 로드된 컬렉션 사용
                 collection = st.session_state.chroma_collection
                 
-                # 검색 실행
-                result_df = db_search_utils.search_collection(collection, query, n_results=n_results)
+                # 유사도 기반 검색 실행
+                # 시각화에 사용할 경우 임베딩도 함께 가져옴
+                if use_search_for_viz:
+                    # 새로운 함수 사용 - 모든 문서 대상 검색 (1000개 제한 해결)
+                    result_df, embeddings = db_search_utils.search_collection_by_similarity_full(
+                        collection, query, similarity_threshold, include_embeddings=True
+                    )
+                    # 검색 결과 및 임베딩 저장 (시각화에 사용)
+                    st.session_state.search_results_for_viz = {
+                        'query': query,
+                        'df': result_df,
+                        'embeddings': embeddings,
+                        'threshold': similarity_threshold
+                    }
+                    # 검색 결과 시각화 준비 완료 메시지
+                    if not result_df.empty:
+                        st.success(f"{len(result_df)}개의 문서가 시각화를 위해 준비되었습니다. '시각화' 탭으로 이동하세요.")
+                else:
+                    # 새로운 함수 사용 - 모든 문서 대상 검색 (1000개 제한 해결)
+                    result_df = db_search_utils.search_collection_by_similarity_full(
+                        collection, query, similarity_threshold
+                    )
                 
                 # 검색 결과 저장 (삭제 기능을 위해)
                 st.session_state.last_search_results = result_df
@@ -270,6 +302,19 @@ def render_visualization_tab(selected_collection):
     
     # 시각화 설정
     with st.expander("시각화 설정", expanded=True):
+        # 검색 결과를 시각화에 사용할지 여부 확인
+        use_search_results = False
+        search_results_available = 'search_results_for_viz' in st.session_state and st.session_state.search_results_for_viz is not None
+        
+        if search_results_available:
+            search_results_info = st.session_state.search_results_for_viz
+            search_df = search_results_info['df']
+            use_search_results = st.checkbox(
+                f"검색 결과 시각화 ('{search_results_info['query']}' 검색 결과 {len(search_df)}개 문서)",
+                value=True,
+                help="체크하면 검색 결과를 시각화합니다. 체크 해제하면 전체 컬렉션에서 시각화 데이터를 생성합니다."
+            )
+        
         # 컬렉션의 전체 문서 수 가져오기
         try:
             collection = st.session_state.chroma_collection
@@ -277,19 +322,21 @@ def render_visualization_tab(selected_collection):
         except:
             total_docs = 0
         
-        # 문서 비율 설정 슬라이더 (백분율) - 라벨에 실제 문서 수 표시
-        docs_percentage = st.slider(
-            "사용할 문서 비율(%)",
-            min_value=1,
-            max_value=100,
-            value=20,
-            step=1,
-            key="docs_percentage_slider",
-            help="전체 문서 중 시각화에 사용할 문서의 비율을 설정합니다. 100%는 모든 문서를 사용합니다. 문서가 많을수록 처리 시간이 길어집니다."
-        )
-        
-        # 슬라이더 값이 변경될 때마다 라벨 업데이트
-        st.markdown(f"<p style='margin-top:-15px; font-size:0.85em;'>선택된 문서 수: {max(1, int(total_docs * docs_percentage / 100))}개 (전체 {total_docs}개 중)</p>", unsafe_allow_html=True)
+        # 검색 결과를 사용하지 않을 경우에만 문서 비율 슬라이더 표시
+        if not use_search_results:
+            # 문서 비율 설정 슬라이더 (백분율) - 라벨에 실제 문서 수 표시
+            docs_percentage = st.slider(
+                "사용할 문서 비율(%)",
+                min_value=1,
+                max_value=100,
+                value=20,
+                step=1,
+                key="docs_percentage_slider",
+                help="전체 문서 중 시각화에 사용할 문서의 비율을 설정합니다. 100%는 모든 문서를 사용합니다. 문서가 많을수록 처리 시간이 길어집니다."
+            )
+            
+            # 슬라이더 값이 변경될 때마다 라벨 업데이트
+            st.markdown(f"<p style='margin-top:-15px; font-size:0.85em;'>선택된 문서 수: {max(1, int(total_docs * docs_percentage / 100))}개 (전체 {total_docs}개 중)</p>", unsafe_allow_html=True)
         
         # 자동 최적 클러스터 수 찾기 옵션
         find_optimal = st.checkbox(
@@ -356,58 +403,157 @@ def render_visualization_tab(selected_collection):
                 # 이미 로드된 컬렉션 사용
                 collection = st.session_state.chroma_collection
                 
-                # 컬렉션의 모든 데이터 가져오기
-                _, all_data = db_search_utils.load_collection_data(collection)
+                # 검색 결과를 사용하는 경우와 전체 컬렉션을 사용하는 경우 분리
+                if use_search_results and search_results_available:
+                    # 검색 결과 정보 가져오기
+                    search_results_info = st.session_state.search_results_for_viz
+                    search_df = search_results_info['df']
+                    search_embeddings = search_results_info['embeddings']
+                    
+                    if not search_df.empty and len(search_embeddings) > 0:
+                        # 검색 결과의 문서 수 표시
+                        total_docs = len(search_df)
+                        st.success(f"검색 결과 '{search_results_info['query']}'에서 {total_docs}개의 문서를 시각화합니다.")
+                        
+                        # 검색 결과에서 필요한 데이터 추출
+                        documents = search_df['내용'].tolist()
+                        ids = search_df['ID'].tolist()
+                        
+                        # 메타데이터 구성
+                        metadatas = []
+                        for _, row in search_df.iterrows():
+                            metadata = {'source': row.get('source', '알 수 없음')}
+                            if 'chunk' in row:
+                                metadata['chunk'] = row['chunk']
+                            metadatas.append(metadata)
+                        
+                        # 임베딩 배열로 변환
+                        import numpy as np
+                        embeddings_array = np.array(search_embeddings)
+                        
+                        # 최소 필요 문서 수 확인
+                        if total_docs < n_clusters:
+                            st.warning(f"검색 결과 문서 수({total_docs})가 클러스터 수({n_clusters})보다 적습니다. 클러스터 수를 줄이거나 검색 유사도 임계값을 낮춰보세요.")
+                            if total_docs < 3:
+                                st.error("시각화를 위해서는 최소 3개 이상의 문서가 필요합니다.")
+                                st.stop()
+                            else:
+                                n_clusters = max(2, total_docs // 2)
+                                st.info(f"클러스터 수를 {n_clusters}로 자동 조정합니다.")
+                    else:
+                        st.error("검색 결과가 없거나 임베딩 데이터를 가져올 수 없습니다.")
+                        st.stop()
+                else:
+                    # 컬렉션의 모든 데이터 가져오기
+                    _, all_data = db_search_utils.load_collection_data(collection)
+                    
+                    if all_data and all_data["documents"]:
+                        # 결과 표시
+                        total_docs = len(all_data["documents"])
+                        st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
+                        
+                        # 문서 비율(%) 기반으로 시각화 데이터 가져오기
+                        documents, metadatas, ids, embeddings = visualization_utils.get_embeddings_data(collection, all_data, docs_percentage)
+                        
+                        # 임베딩이 없는 경우 처리
+                        if len(embeddings) == 0:
+                            st.error("임베딩 데이터를 가져올 수 없습니다.")
+                            embeddings = visualization_utils.handle_missing_embeddings(collection, documents)
+                        
+                        # 임베딩 배열로 변환
+                        import numpy as np
+                        embeddings_array = np.array(embeddings)
+                    else:
+                        st.info("컬렉션에 데이터가 없습니다.")
+                        st.stop()
                 
-                if all_data and all_data["documents"]:
-                    # 결과 표시
-                    total_docs = len(all_data["documents"])
-                    st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
-                    
-                    # 문서 비율(%) 기반으로 시각화 데이터 가져오기
-                    documents, metadatas, ids, embeddings = visualization_utils.get_embeddings_data(collection, all_data, docs_percentage)
-                    
-                    # 임베딩이 없는 경우 처리
-                    if len(embeddings) == 0:
-                        st.error("임베딩 데이터를 가져올 수 없습니다.")
-                        embeddings = visualization_utils.handle_missing_embeddings(collection, documents)
-                    
-                    # 임베딩 배열로 변환
-                    import numpy as np
-                    embeddings_array = np.array(embeddings)
-                    
-                    # 최적 클러스터 수 찾기
-                    if find_optimal:
-                        st.subheader("최적 클러스터 수 분석")
-                        with st.spinner("최적 클러스터 수 계산 중..."):
-                            silhouette_df, optimal_clusters = visualization_utils.find_optimal_clusters(embeddings_array, max_clusters)
-                            
-                            # 엘보우 방법 시각화
-                            visualization_utils.plot_elbow_method(silhouette_df)
-                            
-                            # 최적 클러스터 수 정보 표시
-                            visualization_utils.display_optimal_cluster_info(optimal_clusters)
-                            
-                            # 최적 클러스터 수를 사용하도록 설정
-                            n_clusters = int(optimal_clusters["클러스터 수"])
-                            st.success(f"최적의 클러스터 수로 {n_clusters}을(를) 사용합니다.")
-                    
-                    # 시각화 데이터 준비
-                    viz_data = visualization_utils.prepare_visualization_data(
-                        embeddings_array, documents, ids, metadatas, perplexity, n_clusters
+                # 최적 클러스터 수 찾기
+                if find_optimal:
+                    st.subheader("최적 클러스터 수 분석")
+                    with st.spinner("최적 클러스터 수 계산 중..."):
+                        silhouette_df, optimal_clusters = visualization_utils.find_optimal_clusters(embeddings_array, max_clusters)
+                        
+                        # 엘보우 방법 시각화
+                        visualization_utils.plot_elbow_method(silhouette_df)
+                        
+                        # 최적 클러스터 수 정보 표시
+                        visualization_utils.display_optimal_cluster_info(optimal_clusters)
+                        
+                        # 최적 클러스터 수를 사용하도록 설정
+                        n_clusters = int(optimal_clusters["클러스터 수"])
+                        st.success(f"최적의 클러스터 수로 {n_clusters}을(를) 사용합니다.")
+                
+                # 시각화 데이터 준비
+                viz_data = visualization_utils.prepare_visualization_data(
+                    embeddings_array, documents, ids, metadatas, perplexity, n_clusters
+                )
+                
+                # 세션 상태에 시각화 데이터와 클러스터 수 저장
+                st.session_state.viz_data = viz_data
+                st.session_state.n_clusters = n_clusters
+                st.session_state.viz_completed = True
+                
+                # 기본 시각화 정보를 세션 상태로 저장
+                render_visualizations(viz_data, n_clusters)
+                
+                # LDA 토픽 모델링도 함께 실행 (추가된 부분)
+                st.subheader("클러스터별 LDA 토픽 모델링")
+
+                # 기본 LDA 토픽 수 설정
+                lda_topics = 3
+                
+                # LDA 토픽 수 설정을 세션 상태에 저장
+                st.session_state.lda_topics = lda_topics
+                
+                # LDA 토픽 모델링 섹션 (클러스터링이 완료된 후에만 표시)
+                if 'viz_completed' in st.session_state and st.session_state.viz_completed:        
+                    # LDA 토픽 수 설정
+                    lda_topics = st.slider(
+                        "LDA 토픽 수",
+                        min_value=2,
+                        max_value=10,
+                        value=st.session_state.get('lda_topics', 3),  # 기본값 또는 이전에 설정한 값 사용
+                        step=1,
+                        help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
                     )
                     
-                    # 세션 상태에 시각화 데이터와 클러스터 수 저장
-                    st.session_state.viz_data = viz_data
-                    st.session_state.n_clusters = n_clusters
-                    st.session_state.viz_completed = True
+                    # 슬라이더 값이 변경되면 세션 상태에 저장
+                    st.session_state.lda_topics = lda_topics
                     
-                    # 기본 시각화 정보를 세션 상태로 저장
-                    render_visualizations(viz_data, n_clusters)
-                    
-                else:
-                    st.info("컬렉션에 데이터가 없습니다.")
-            
+                    # 명확한 키 값을 가진 LDA 토픽 모델링 버튼
+                    if st.button("LDA 토픽 모델링 다시 실행", key="run_lda_again_btn", type="primary"):
+                        with st.spinner("LDA 토픽 모델링 중..."):
+                            try:
+                                # 세션 상태에서 데이터 가져오기
+                                viz_data = st.session_state.viz_data
+                                n_clusters = st.session_state.n_clusters
+                                
+                                # 토픽 모델링이 실행 중임을 표시
+                                st.session_state.lda_running = True
+                                
+                                # LDA 토픽 모델링만 다시 실행
+                                visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
+                                
+                                # 실행 완료 표시
+                                st.success("LDA 토픽 모델링이 완료되었습니다.")
+                            except Exception as e:
+                                st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
+                                st.exception(e)
+                            finally:
+                                # 실행 상태 초기화
+                                st.session_state.lda_running = False
+
+
+                st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
+                
+                # LDA 토픽 모델링 실행
+                with st.spinner("LDA 토픽 모델링 중..."):
+                    try:
+                        visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
+                    except Exception as e:
+                        st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
+                        st.info("LDA 토픽 모델링에는 실패했지만, 기본 시각화는 완료되었습니다.")
+                
             except Exception as e:
                 st.error(f"시각화 생성 중 오류가 발생했습니다: {str(e)}")
                 st.exception(e)
@@ -417,36 +563,6 @@ def render_visualization_tab(selected_collection):
         viz_data = st.session_state.viz_data
         n_clusters = st.session_state.n_clusters
         render_visualizations(viz_data, n_clusters)
-
-    # LDA 토픽 모델링 섹션 (클러스터링이 완료된 후에만 표시)
-    # expander를 사용하지 않고 직접 subheader로 표시
-    if 'viz_completed' in st.session_state and st.session_state.viz_completed:
-        st.subheader("클러스터별 LDA 토픽 모델링")
-        st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
-        
-        # LDA 토픽 수 설정
-        lda_topics = st.slider(
-            "LDA 토픽 수",
-            min_value=2,
-            max_value=10,
-            value=3,
-            step=1,
-            help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
-        )
-        
-        if st.button("LDA 토픽 모델링 실행", type="primary"):
-            with st.spinner("LDA 토픽 모델링 중..."):
-                try:
-                    # 세션 상태에서 데이터 가져오기
-                    viz_data = st.session_state.viz_data
-                    n_clusters = st.session_state.n_clusters
-                    
-                    # LDA 토픽 모델링 실행 - 기존 함수를 그대로 사용
-                    # visualization_utils.display_cluster_lda 함수는 내부에서 각 클러스터별로 expander를 생성합니다
-                    visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
-                except Exception as e:
-                    st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
-                    st.exception(e)
 
 # 시각화 렌더링 함수를 분리하여 재사용 가능하게 함
 def render_visualizations(viz_data, n_clusters):
