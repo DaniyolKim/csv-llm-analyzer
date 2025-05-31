@@ -270,6 +270,27 @@ def render_visualization_tab(selected_collection):
     
     # 시각화 설정
     with st.expander("시각화 설정", expanded=True):
+        # 컬렉션의 전체 문서 수 가져오기
+        try:
+            collection = st.session_state.chroma_collection
+            total_docs = collection.count()
+        except:
+            total_docs = 0
+        
+        # 문서 비율 설정 슬라이더 (백분율) - 라벨에 실제 문서 수 표시
+        docs_percentage = st.slider(
+            "사용할 문서 비율(%)",
+            min_value=1,
+            max_value=100,
+            value=20,
+            step=1,
+            key="docs_percentage_slider",
+            help="전체 문서 중 시각화에 사용할 문서의 비율을 설정합니다. 100%는 모든 문서를 사용합니다. 문서가 많을수록 처리 시간이 길어집니다."
+        )
+        
+        # 슬라이더 값이 변경될 때마다 라벨 업데이트
+        st.markdown(f"<p style='margin-top:-15px; font-size:0.85em;'>선택된 문서 수: {max(1, int(total_docs * docs_percentage / 100))}개 (전체 {total_docs}개 중)</p>", unsafe_allow_html=True)
+        
         # 자동 최적 클러스터 수 찾기 옵션
         find_optimal = st.checkbox(
             "최적 클러스터 수 자동 찾기", 
@@ -308,16 +329,6 @@ def render_visualization_tab(selected_collection):
                 help="문서를 그룹화할 클러스터의 수를 설정합니다."
             )
         
-        # 최대 문서 수 설정
-        max_docs = st.slider(
-            "최대 문서 수",
-            min_value=50,
-            max_value=1000,
-            value=200,
-            step=50,
-            help="시각화할 최대 문서 수를 설정합니다. 문서가 많을수록 처리 시간이 길어집니다."
-        )
-        
         # 차원 축소 방법 선택
         perplexity = st.slider(
             "t-SNE 복잡도(Perplexity)",
@@ -353,8 +364,8 @@ def render_visualization_tab(selected_collection):
                     total_docs = len(all_data["documents"])
                     st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
                     
-                    # 임베딩 데이터 가져오기
-                    documents, metadatas, ids, embeddings = visualization_utils.get_embeddings_data(collection, all_data, max_docs)
+                    # 문서 비율(%) 기반으로 시각화 데이터 가져오기
+                    documents, metadatas, ids, embeddings = visualization_utils.get_embeddings_data(collection, all_data, docs_percentage)
                     
                     # 임베딩이 없는 경우 처리
                     if len(embeddings) == 0:

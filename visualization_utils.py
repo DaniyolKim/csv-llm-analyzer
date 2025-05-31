@@ -25,15 +25,18 @@ try:
 except ImportError:
     pass
 
-def get_embeddings_data(collection, all_data, max_docs):
+def get_embeddings_data(collection, all_data, docs_percentage):
     """컬렉션에서 임베딩 데이터를 가져오는 함수"""
     total_docs = len(all_data["documents"])
     
-    # 최대 문서 수 제한 적용
-    if total_docs > max_docs:
-        st.info(f"문서가 너무 많아 무작위로 {max_docs}개를 선택하여 시각화합니다.")
+    # 백분율에 따른 문서 수 계산
+    if docs_percentage < 100:
+        # 백분율 기준으로 문서 수 계산
+        num_docs = max(1, int(total_docs * docs_percentage / 100))
+        st.info(f"전체 {total_docs}개 문서 중 {docs_percentage}%인 {num_docs}개의 문서를 무작위로 선택하여 시각화합니다.")
+        
         # 무작위 인덱스 선택
-        random_indices = random.sample(range(total_docs), max_docs)
+        random_indices = random.sample(range(total_docs), num_docs)
         
         # 선택된 인덱스를 사용하여 데이터 추출
         documents = [all_data["documents"][i] for i in random_indices]
@@ -51,6 +54,9 @@ def get_embeddings_data(collection, all_data, max_docs):
             st.warning(f"임베딩 데이터 가져오기 실패: {str(e)}")
             embeddings = []
     else:
+        # 100%인 경우 모든 문서 사용
+        st.info(f"모든 {total_docs}개 문서를 시각화합니다. 처리 시간이 길어질 수 있습니다.")
+        
         documents = all_data["documents"]
         metadatas = all_data["metadatas"]
         ids = all_data["ids"]
