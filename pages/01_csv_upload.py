@@ -329,7 +329,6 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
                         # 진행 상황 표시
                         progress_bar = st.progress(0)
                         status_text = st.empty()
-                        status_text.text("ChromaDB에 데이터 저장 준비 중...")
                         
                         client, collection = store_data_in_chroma(
                             df, 
@@ -338,11 +337,10 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
                             persist_directory,
                             max_rows=max_process_rows,
                             batch_size=batch_size,
-                            embedding_model=st.session_state.embedding_model  # 선택한 임베딩 모델 전달
+                            embedding_model=st.session_state.embedding_model,  # 선택한 임베딩 모델 전달
+                            progress_bar=progress_bar,
+                            status_text=status_text
                         )
-                        
-                        progress_bar.progress(100)
-                        status_text.text("ChromaDB에 데이터 저장 완료!")
                         
                         st.session_state.chroma_client = client
                         st.session_state.chroma_collection = collection

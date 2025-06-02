@@ -175,7 +175,7 @@ def get_available_collections(persist_directory="./chroma_db"):
 
 def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persist_directory="./chroma_db", 
                           chunk_size=500, chunk_overlap=50, max_rows=None, batch_size=100, append=True, 
-                          embedding_model="all-MiniLM-L6-v2"):
+                          embedding_model="all-MiniLM-L6-v2", progress_bar=None, status_text=None):
     """
     선택한 열의 데이터를 ChromaDB에 저장합니다.
     의미 기반 청킹 기능을 사용하여 검색 정확도와 유사도 계산의 품질을 향상시킵니다.
@@ -191,6 +191,8 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         batch_size (int): 배치 처리 크기
         append (bool): 기존 컬렉션에 데이터를 추가할지 여부
         embedding_model (str): 임베딩 모델 이름
+        progress_bar (streamlit.Progress, optional): Streamlit progress bar 객체
+        status_text (streamlit.empty, optional): Streamlit status text 객체
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -252,12 +254,23 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         # 더 작은 청크 단위로 나누어 처리
         chunk_size_rows = min(batch_size * 5, 500)  # 한 번에 최대 500행씩 처리
         total_chunks = (len(selected_df) + chunk_size_rows - 1) // chunk_size_rows
+        logger.info(f"전체 처리할 행 청크 수: {total_chunks}")
+
+        if status_text:
+            status_text.text(f"데이터 처리 준비 중... 총 {total_chunks}개 대형 배치 예정")
+        if progress_bar:
+            progress_bar.progress(0)
         
         for chunk_idx in range(total_chunks):
             # 행 청크 계산
             start_idx = chunk_idx * chunk_size_rows
             end_idx = min((chunk_idx + 1) * chunk_size_rows, len(selected_df))
             df_chunk = selected_df.iloc[start_idx:end_idx]
+            
+            if status_text:
+                status_text.text(f"데이터 저장 진행: {chunk_idx + 1}/{total_chunks} 번째 대형 배치 처리 중...")
+            if progress_bar:
+                progress_bar.progress((chunk_idx + 1) / total_chunks)
             
             # 배치 처리를 위한 변수 초기화
             batch_documents = []
@@ -409,6 +422,11 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         
         end_time = time.time()
         logger.info(f"ChromaDB 데이터 저장 완료: {total_documents_processed}개 문서, 소요 시간: {end_time - start_time:.2f}초")
+        
+        if status_text:
+            status_text.text("ChromaDB 데이터 저장 완료!")
+        if progress_bar:
+            progress_bar.progress(1.0) # Ensure it reaches 100%
         
         return client, collection
     except Exception as e:
