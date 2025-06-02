@@ -32,14 +32,14 @@ env/
 *.swo
 
 # Streamlit
-.streamlit/
+# .streamlit/
 
 # Data files
 *.xlsx
 *.xls
 *.db
 *.sqlite
-chroma_db*
+chroma_*
 
 # Logs
 *.log
