@@ -40,7 +40,14 @@ if 'viz_data' not in st.session_state:
 if 'n_clusters' not in st.session_state:
     st.session_state.n_clusters = None
 if 'max_words_wc_slider' not in st.session_state: # WordCloud 최대 단어 수 세션 상태
-    st.session_state.max_words_wc_slider = 50
+    st.session_state.max_words_wc_slider = 100
+# 최적 클러스터 분석 결과 표시를 위한 세션 상태
+if 'show_optimal_cluster_analysis' not in st.session_state:
+    st.session_state.show_optimal_cluster_analysis = False
+if 'silhouette_df_for_plot' not in st.session_state:
+    st.session_state.silhouette_df_for_plot = None
+if 'optimal_clusters_info' not in st.session_state:
+    st.session_state.optimal_clusters_info = None
 
 st.title("DB 검색")
 
@@ -397,7 +404,7 @@ def render_visualization_tab(selected_collection):
         )
 
         # WordCloud 최대 단어 수 설정
-        current_max_words_val = st.session_state.get('max_words_wc_slider', 50)
+        current_max_words_val = st.session_state.get('max_words_wc_slider', 100)
         max_words_wc_slider = st.slider(
             "WordCloud 최대 단어 수",
             min_value=20,
@@ -415,6 +422,15 @@ def render_visualization_tab(selected_collection):
     
     # 시각화 버튼
     if st.button("시각화 생성", key="create_viz_btn", type="primary"):
+        # "시각화 생성" 버튼 클릭 시, 이전 분석 결과 및 시각화 관련 세션 상태 초기화
+        st.session_state.show_optimal_cluster_analysis = False
+        st.session_state.silhouette_df_for_plot = None
+        st.session_state.optimal_clusters_info = None
+        st.session_state.viz_completed = False # 새로운 시각화가 완료될 때까지 이전 결과 숨김
+        st.session_state.viz_data = None
+        # n_clusters는 아래 로직에서 find_optimal 여부에 따라 다시 설정되므로 여기서 None으로 초기화
+        st.session_state.n_clusters = None 
+
         with st.spinner("시각화를 생성하는 중... 이 작업은 데이터 크기에 따라 시간이 걸릴 수 있습니다."):
             try:
                 # 이미 로드된 컬렉션 사용
@@ -492,13 +508,22 @@ def render_visualization_tab(selected_collection):
                         
                         # 엘보우 방법 시각화
                         visualization_utils.plot_elbow_method(silhouette_df)
-                        
                         # 최적 클러스터 수 정보 표시
                         visualization_utils.display_optimal_cluster_info(optimal_clusters)
                         
                         # 최적 클러스터 수를 사용하도록 설정
                         n_clusters = int(optimal_clusters["클러스터 수"])
                         st.success(f"최적의 클러스터 수로 {n_clusters}을(를) 사용합니다.")
+
+                        # 세션 상태에 분석 결과 저장
+                        st.session_state.show_optimal_cluster_analysis = True
+                        st.session_state.silhouette_df_for_plot = silhouette_df
+                        st.session_state.optimal_clusters_info = optimal_clusters
+                else:
+                    # 자동 찾기를 사용하지 않으면 관련 세션 상태 초기화
+                    st.session_state.show_optimal_cluster_analysis = False
+                    st.session_state.silhouette_df_for_plot = None
+                    st.session_state.optimal_clusters_info = None
                 
                 # 시각화 데이터 준비
                 viz_data = visualization_utils.prepare_visualization_data(
@@ -517,6 +542,19 @@ def render_visualization_tab(selected_collection):
     # 시각화가 이미 완료된 경우, 저장된 시각화 데이터를 다시 표시
     elif 'viz_completed' in st.session_state and st.session_state.viz_completed:
         # 시각화 데이터를 사용하여 기존 시각화 표시
+        
+        # 최적 클러스터 수 분석 결과가 있으면 먼저 표시
+        if st.session_state.get('show_optimal_cluster_analysis', False):
+            st.subheader("최적 클러스터 수 분석")
+            silhouette_df_to_plot = st.session_state.get('silhouette_df_for_plot')
+            optimal_clusters_to_display = st.session_state.get('optimal_clusters_info')
+            if silhouette_df_to_plot is not None and optimal_clusters_to_display is not None:
+                visualization_utils.plot_elbow_method(silhouette_df_to_plot)
+                visualization_utils.display_optimal_cluster_info(optimal_clusters_to_display)
+            else:
+                # 이 경우는 거의 발생하지 않아야 함
+                st.info("최적 클러스터 수 분석 정보가 세션에 없습니다.")
+
         viz_data = st.session_state.get('viz_data')
         n_clusters = st.session_state.get('n_clusters')
         if viz_data is not None and n_clusters is not None:
