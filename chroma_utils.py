@@ -8,15 +8,18 @@ import chromadb
 import gc
 import time
 import logging
-import pandas as pd  # pandas 모듈 추가
+import pandas as pd
+import torch # For GPU monitoring
+import threading # For GPU monitoring thread
 from text_utils import clean_text
 from data_utils import preprocess_dataframe
-from embedding_utils import get_embedding_function, get_embedding_status, get_normalized_embedding_function
+from embedding_utils import get_embedding_status, get_normalized_embedding_function, is_gpu_available
+
 
 # 로깅 설정
 logger = logging.getLogger("chroma_utils")
 
-def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db", overwrite=False, embedding_model="all-MiniLM-L6-v2"):
+def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db", overwrite=False, embedding_model="all-MiniLM-L6-v2", embedding_device_preference="auto"):
     """
     ChromaDB 클라이언트와 컬렉션을 생성합니다.
     
@@ -24,7 +27,8 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
         overwrite (bool): 기존 컬렉션을 덮어쓸지 여부
-        embedding_model (str): 임베딩 모델 이름
+        embedding_model (str): 요청할 임베딩 모델 이름
+        embedding_device_preference (str): 임베딩 연산에 사용할 장치 ("auto", "cuda", "cpu")
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -37,7 +41,7 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
         client = chromadb.PersistentClient(path=persist_directory)
         
         # 임베딩 함수 설정 (L2 정규화 적용)
-        embedding_function = get_normalized_embedding_function(embedding_model)
+        embedding_function = get_normalized_embedding_function(embedding_model, device_preference=embedding_device_preference)
         
         # 컬렉션 존재 여부 확인
         collections = client.list_collections()
@@ -50,7 +54,7 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
                 collection = client.create_collection(
                     name=collection_name,
                     embedding_function=embedding_function,
-                    metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
+                    metadata={"embedding_model": get_embedding_status()["actual_model"]}  # 실제 사용된 임베딩 모델 정보 저장
                 )
             else:
                 # 기존 컬렉션 사용
@@ -60,7 +64,7 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
                 )
                 # 기존 컬렉션에 임베딩 모델 메타데이터 업데이트
                 try:
-                    collection.metadata = {"embedding_model": embedding_model}
+                    collection.metadata = {"embedding_model": get_embedding_status()["actual_model"]}
                 except:
                     # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
                     pass
@@ -69,7 +73,7 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
             collection = client.create_collection(
                 name=collection_name,
                 embedding_function=embedding_function,
-                metadata={"embedding_model": embedding_model}  # 임베딩 모델 정보 저장
+                metadata={"embedding_model": get_embedding_status()["actual_model"]}  # 실제 사용된 임베딩 모델 정보 저장
             )
         
         return client, collection
@@ -77,13 +81,14 @@ def create_chroma_db(collection_name="csv_test", persist_directory="./chroma_db"
         logger.error(f"ChromaDB 생성 중 오류 발생: {e}")
         raise
 
-def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db"):
+def load_chroma_collection(collection_name="csv_test", persist_directory="./chroma_db", embedding_device_preference="auto"):
     """
     기존 ChromaDB 컬렉션을 로드합니다.
     
     Args:
         collection_name (str): 컬렉션 이름
         persist_directory (str): 데이터베이스 저장 경로
+        embedding_device_preference (str): 임베딩 연산에 사용할 장치 ("auto", "cuda", "cpu")
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -98,7 +103,7 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
     # 컬렉션 존재 여부 확인
     collections = client.list_collections()
     collection_exists = collection_name in [c.name for c in collections]
-    embedding_model = "all-MiniLM-L6-v2"  # 기본값
+    embedding_model_to_load = "all-MiniLM-L6-v2"  # 기본값
     
     if collection_exists:
         # 임시로 임베딩 함수 없이 컬렉션 가져오기 (메타데이터 확인용)
@@ -108,18 +113,18 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
             if temp_collection.metadata and "embedding_model" in temp_collection.metadata:
                 stored_model = temp_collection.metadata["embedding_model"]
                 print(f"컬렉션에 저장된 임베딩 모델 정보를 찾았습니다: {stored_model}")
-                # 저장된 임베딩 모델 사용
-                embedding_model = stored_model
+                embedding_model_to_load = stored_model # 컬렉션 생성 시 사용된 모델을 우선 로드 시도
         except Exception as e:
             # 메타데이터 접근 실패 시 기본 모델 사용
-            print(f"컬렉션 메타데이터 접근 실패: {str(e)}, 기본 임베딩 모델을 사용합니다: {embedding_model}")
+            print(f"컬렉션 메타데이터 접근 실패: {str(e)}, 기본 임베딩 모델을 사용합니다: {embedding_model_to_load}")
     
     # 임베딩 모델이 지정되지 않았으면 컬렉션에서 가져오기
-    if embedding_model is None:
-        embedding_model = "all-MiniLM-L6-v2"  # 기본값
+    if embedding_model_to_load is None: # 이 경우는 거의 없지만 안전장치
+        embedding_model_to_load = "all-MiniLM-L6-v2"
     
     # 임베딩 함수 설정 (L2 정규화 적용)
-    embedding_function = get_normalized_embedding_function(embedding_model)
+    embedding_function = get_normalized_embedding_function(embedding_model_to_load, device_preference=embedding_device_preference)
+    actual_embedding_model_used = get_embedding_status()["actual_model"] # 실제 로드된 모델
     
     if collection_exists:
         # 기존 컬렉션 사용
@@ -131,7 +136,7 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
             # 임베딩 모델 정보가 없으면 추가
             if not collection.metadata or "embedding_model" not in collection.metadata:
                 try:
-                    collection.metadata = {"embedding_model": embedding_model}
+                    collection.metadata = {"embedding_model": actual_embedding_model_used}
                 except:
                     # 일부 버전에서는 메타데이터 직접 업데이트가 지원되지 않을 수 있음
                     pass
@@ -144,7 +149,7 @@ def load_chroma_collection(collection_name="csv_test", persist_directory="./chro
         collection = client.create_collection(
             name=collection_name,
             embedding_function=embedding_function,
-            metadata={"embedding_model": embedding_model}
+            metadata={"embedding_model": actual_embedding_model_used}
         )
     
     return client, collection
@@ -175,8 +180,8 @@ def get_available_collections(persist_directory="./chroma_db"):
 
 def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persist_directory="./chroma_db", 
                           chunk_size=500, chunk_overlap=50, max_rows=None, batch_size=100, append=True, 
-                          embedding_model="all-MiniLM-L6-v2", progress_bar=None, status_text=None):
-    """
+                          embedding_model="all-MiniLM-L6-v2", embedding_device_preference="auto", progress_bar=None, status_text=None, gpu_status_placeholder=None):
+    """ # noqa: E501
     선택한 열의 데이터를 ChromaDB에 저장합니다.
     의미 기반 청킹 기능을 사용하여 검색 정확도와 유사도 계산의 품질을 향상시킵니다.
     
@@ -191,8 +196,10 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         batch_size (int): 배치 처리 크기
         append (bool): 기존 컬렉션에 데이터를 추가할지 여부
         embedding_model (str): 임베딩 모델 이름
+        embedding_device_preference (str): 임베딩 연산에 사용할 장치 ("auto", "cuda", "cpu")
         progress_bar (streamlit.Progress, optional): Streamlit progress bar 객체
         status_text (streamlit.empty, optional): Streamlit status text 객체
+        gpu_status_placeholder (streamlit.empty, optional): Streamlit empty object for GPU status
         
     Returns:
         tuple: (chromadb.Client, chromadb.Collection) 클라이언트와 컬렉션
@@ -200,9 +207,41 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
     start_time = time.time()
     logger.info(f"ChromaDB 데이터 저장 시작: {collection_name}")
     
+    monitor_thread = None
+    stop_event = None
+
+    # GPU 모니터링 스레드 설정
+    if embedding_device_preference != "cpu" and is_gpu_available() and gpu_status_placeholder:
+        stop_event = threading.Event()
+
+        def monitor_gpu_memory(stop_event_ref): # placeholder 인자 제거
+            initial_total_gpu_mem_mb = 0
+            if torch.cuda.is_available():
+                try:
+                    initial_total_gpu_mem_mb = torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory / (1024**2)
+                    logger.info(f"GPU 총 메모리: {initial_total_gpu_mem_mb:.0f} MB. 사용량 모니터링 중...") # logger 사용
+                except Exception as e:
+                    logger.error(f"GPU 총 메모리 조회 실패: {e}")
+                    logger.warning("GPU 총 메모리 조회 실패.") # logger 사용
+
+            while not stop_event_ref.is_set():
+                try:
+                    if torch.cuda.is_available(): # Check again in loop in case GPU becomes unavailable
+                        allocated = torch.cuda.memory_allocated() / (1024**2) # MB
+                        reserved = torch.cuda.memory_reserved() / (1024**2) # MB
+                        logger.info(f"GPU Mem: 사용 {allocated:.0f}MB | 예약 {reserved:.0f}MB (총 {initial_total_gpu_mem_mb:.0f}MB)") # logger 사용
+                    else:
+                        logger.warning("GPU를 사용할 수 없습니다.") # logger 사용
+                        break
+                    time.sleep(1) # 1초마다 업데이트
+                except Exception: # GPU 사용 불가 또는 기타 오류 처리
+                    logger.warning("GPU 모니터링 중 오류 발생. 모니터링 중단.") # logger 사용
+                    break
+            logger.info("GPU 모니터링 스레드 종료.") # logger 사용
+
     try:
         # 데이터 전처리
-        from text_utils import chunk_text_semantic, extract_keywords
+        from text_utils import chunk_text_semantic, extract_keywords # 원본 호출 유지
         selected_df = preprocess_dataframe(df, selected_columns, max_rows)
         
         # 전처리 후 데이터가 없는 경우
@@ -212,9 +251,14 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         # 처리할 전체 행 수
         total_rows = len(selected_df)
         logger.info(f"처리할 전체 행 수: {total_rows}")
+
+        # GPU 모니터링 스레드 시작
+        if monitor_thread is None and stop_event is not None and gpu_status_placeholder is not None: # Ensure thread is not already started
+            monitor_thread = threading.Thread(target=monitor_gpu_memory, args=(stop_event,)) # placeholder 인자 전달 제거
+            monitor_thread.start()
         
         # ChromaDB 생성 또는 로드 (임베딩 모델 지정)
-        client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append, embedding_model=embedding_model)
+        client, collection = create_chroma_db(collection_name, persist_directory, overwrite=not append, embedding_model=embedding_model, embedding_device_preference=embedding_device_preference)
         
         # 임베딩 함수가 제대로 설정되었는지 확인
         if not hasattr(collection, "_embedding_function") or collection._embedding_function is None:
@@ -430,9 +474,16 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
         
         return client, collection
     except Exception as e:
-        logger.error(f"ChromaDB 데이터 저장 중 오류 발생: {e}")
+        logger.error(f"ChromaDB 데이터 저장 중 오류 발생: {e}", exc_info=True)
         raise
-
+    finally:
+        # GPU 모니터링 스레드 종료
+        if stop_event and monitor_thread and monitor_thread.is_alive():
+            stop_event.set()
+            monitor_thread.join(timeout=2) # 스레드가 종료될 때까지 최대 2초 대기
+        if gpu_status_placeholder: # Ensure placeholder is cleared if it was used
+            gpu_status_placeholder.empty()
+            
 def query_chroma(collection, query_text, n_results=5):
     """
     ChromaDB에서 쿼리를 실행합니다.

@@ -4,11 +4,14 @@
 import ssl
 import warnings
 import requests
+import torch # GPU 확인을 위해 추가
 import numpy as np
 import hashlib
 from functools import lru_cache
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Union, Optional, Callable
 from chromadb.utils import embedding_functions
+from sentence_transformers import SentenceTransformer # For OOM fallback and direct use
+import logging
 
 # SSL 인증서 검증 우회 옵션 (기본값은 검증함)
 ssl._create_default_https_context_backup = ssl._create_default_https_context
@@ -19,7 +22,10 @@ EMBEDDING_MODEL_STATUS = {
     "requested_model": None,  # 요청한 임베딩 모델
     "actual_model": None,     # 실제 사용중인 임베딩 모델
     "fallback_used": False,   # 폴백(기본 모델)을 사용했는지 여부
-    "error_message": None     # 오류 메시지 (있는 경우)
+    "error_message": None,    # 오류 메시지 (있는 경우)
+    "device_preference": None, # 사용자가 요청한 장치
+    "device_used": None       # 실제 사용된 장치
+    # "last_error_type": None # OOM 발생 등 특정 오류 타입 기록용 (선택적)
 }
 
 # 임베딩 캐시 사전 설정 (메모리 효율성 향상)
@@ -28,6 +34,9 @@ CACHE_HITS = 0
 CACHE_MISSES = 0
 MAX_CACHE_SIZE = 10000  # 최대 캐시 크기
 
+# 로거 설정
+logger = logging.getLogger("embedding_utils")
+
 def reset_embedding_status():
     """임베딩 모델 상태를 초기화합니다."""
     global EMBEDDING_MODEL_STATUS
@@ -35,7 +44,9 @@ def reset_embedding_status():
         "requested_model": None,
         "actual_model": None,
         "fallback_used": False,
-        "error_message": None
+        "error_message": None,
+        "device_preference": None,
+        "device_used": None
     }
     
 def get_embedding_status():
@@ -85,6 +96,28 @@ def get_cache_stats():
         "cache_size": len(EMBEDDING_CACHE)
     }
 
+# GPU 관련 함수 추가
+def is_gpu_available():
+    """CUDA GPU 사용 가능 여부를 확인합니다."""
+    return torch.cuda.is_available()
+
+def get_gpu_info():
+    """사용 가능한 GPU 정보를 반환합니다."""
+    if is_gpu_available():
+        gpu_count = torch.cuda.device_count()
+        gpus = []
+        for i in range(gpu_count):
+            gpus.append({
+                "name": torch.cuda.get_device_name(i),
+                "memory_total": torch.cuda.get_device_properties(i).total_memory / (1024**3), # GB
+            })
+        return {"available": True, "count": gpu_count, "devices": gpus}
+    return {"available": False, "count": 0, "devices": []}
+
+def get_default_embedding_model_name():
+    """기본 임베딩 모델 이름을 반환합니다."""
+    return "all-MiniLM-L6-v2"
+
 # 텍스트 해싱 함수 (캐시 키로 사용)
 def _hash_text(text: str) -> str:
     """
@@ -98,131 +131,161 @@ def _hash_text(text: str) -> str:
     """
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-def get_embedding_function(embedding_model="all-MiniLM-L6-v2", use_cache=True):
+def _create_oom_safe_embedding_function(
+    underlying_ef: Callable[[List[str]], List[List[float]]],
+    model_status_ref: Dict[str, Any],
+    model_name_for_fallback: str
+) -> Callable[[List[str]], List[List[float]]]:
+    """
+    기존 임베딩 함수를 감싸 GPU OOM 발생 시 CPU로 폴백하는 기능을 추가합니다.
+
+    Args:
+        underlying_ef: 원본 임베딩 함수.
+        model_status_ref: EMBEDDING_MODEL_STATUS 딕셔너리에 대한 참조.
+        model_name_for_fallback: OOM 발생 시 CPU에서 로드할 모델의 이름.
+
+    Returns:
+        OOM 안전 기능이 추가된 임베딩 함수.
+    """
+    def oom_safe_function(texts_to_embed: List[str]) -> List[List[float]]:
+        try:
+            return underlying_ef(texts_to_embed)
+        except torch.cuda.OutOfMemoryError as e:
+            if model_status_ref.get("device_used") == "cuda":
+                logger.warning(f"GPU OutOfMemoryError for model '{model_name_for_fallback}': {e}. Attempting batch on CPU.")
+                model_status_ref["error_message"] = f"GPU OOM, batch on CPU: {e}" # 에러 메시지 업데이트
+                # model_status_ref["last_error_type"] = "GPU_OOM_CPU_FALLBACK" # 상태 업데이트
+
+                try:
+                    if model_name_for_fallback == "chromadb_default_ef": # ChromaDB 기본 임베딩은 SentenceTransformer로 재로드 불가
+                        logger.error("Cannot create CPU fallback for 'chromadb_default_ef' during OOM.")
+                        raise # 원래 OOM 오류 다시 발생
+                    
+                    logger.info(f"OOM Fallback: Creating temporary CPU model for '{model_name_for_fallback}'.")
+                    temp_model_cpu = SentenceTransformer(model_name_for_fallback, device='cpu')
+                    embeddings = temp_model_cpu.encode(texts_to_embed).tolist()
+                    del temp_model_cpu
+                    torch.cuda.empty_cache() # GPU 캐시 정리 시도
+                    logger.info(f"OOM Fallback: Successfully processed batch on CPU for '{model_name_for_fallback}'.")
+                    return embeddings
+                except Exception as cpu_fallback_e:
+                    logger.error(f"OOM Fallback: CPU fallback for model '{model_name_for_fallback}' failed: {cpu_fallback_e}", exc_info=True)
+                    raise e # CPU 폴백 실패 시 원래 OOM 오류 다시 발생
+            else:
+                logger.error(f"Caught torch.cuda.OutOfMemoryError, but EMBEDDING_MODEL_STATUS['device_used'] was '{model_status_ref.get('device_used')}'. Re-raising original OOM for model '{model_name_for_fallback}'.")
+                raise
+        except Exception as other_e:
+            logger.error(f"General error during embedding with model '{model_name_for_fallback}': {other_e}", exc_info=True)
+            raise
+    return oom_safe_function
+
+
+def get_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache=True, device_preference="auto"):
     """
     임베딩 함수를 생성합니다. 캐싱 기능이 포함되어 있습니다.
     
     Args:
-        embedding_model (str): 임베딩 모델 이름
+        embedding_model_request (str): 사용자가 요청한 임베딩 모델 이름
         use_cache (bool): 캐시 사용 여부
+        device_preference (str): 사용할 장치 ("auto", "cuda", "cpu")
         
     Returns:
         embedding_function: 임베딩 함수
     """
-    # 임베딩 상태 초기화
     global EMBEDDING_MODEL_STATUS, EMBEDDING_CACHE, CACHE_HITS, CACHE_MISSES
     reset_embedding_status()
-    EMBEDDING_MODEL_STATUS["requested_model"] = embedding_model
+    EMBEDDING_MODEL_STATUS["requested_model"] = embedding_model_request
+    EMBEDDING_MODEL_STATUS["device_preference"] = device_preference
+
+    model_to_try = embedding_model_request
+    if model_to_try == "default" or model_to_try is None:
+        model_to_try = get_default_embedding_model_name()
+
+    # 장치 결정 로직
+    model_kwargs = {}
+    final_device_to_use = "cpu"  # 기본값 CPU
+    if device_preference == "auto":
+        if is_gpu_available():
+            final_device_to_use = "cuda"
+    elif device_preference == "cuda":
+        if is_gpu_available():
+            final_device_to_use = "cuda"
+        else:
+            print("경고: GPU 사용이 요청되었으나 사용 가능한 CUDA 장치가 없습니다. CPU를 사용합니다.")
+            # final_device_to_use는 이미 "cpu"로 설정됨
+    # device_preference == "cpu"인 경우 final_device_to_use는 "cpu"
     
-    # 임베딩 함수 설정
-    if embedding_model == "default" or embedding_model is None:
-        # 기본 임베딩 모델(all-MiniLM-L6-v2) 명시적으로 사용
-        try:
-            print("기본 임베딩 모델(all-MiniLM-L6-v2)을 로드합니다.")
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
-            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
-            EMBEDDING_MODEL_STATUS["fallback_used"] = False
-        except Exception as e:
-            print(f"기본 임베딩 모델 로드 중 오류 발생: {e}")
-            print("내장 기본 임베딩 함수를 사용합니다.")
-            embedding_function = embedding_functions.DefaultEmbeddingFunction()
-            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
+    model_kwargs['device'] = final_device_to_use
+    EMBEDDING_MODEL_STATUS["device_used"] = final_device_to_use
+    print(f"임베딩 모델 로드 시도: '{model_to_try}', 장치: '{final_device_to_use}'")
+
+    base_ef = None
+    
+    # 1차 시도: 요청된 모델 로드
+    try:
+        # SentenceTransformerEmbeddingFunction에 device 인자를 직접 전달하도록 수정
+        base_ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_to_try, device=final_device_to_use)
+        EMBEDDING_MODEL_STATUS["actual_model"] = model_to_try
+        print(f"임베딩 모델 '{model_to_try}' 로드 성공 (장치: {final_device_to_use}).")
+    except Exception as e:
+        print(f"임베딩 모델 '{model_to_try}' 로드 중 오류 발생 (1차 시도): {e}")
+        EMBEDDING_MODEL_STATUS["error_message"] = str(e)
+        
+        # SSL 오류인 경우, SSL 검증 우회 후 재시도
+        if "CERTIFICATE_VERIFY_FAILED" in str(e) or "SSL" in str(e):
+            print("SSL 인증서 검증 실패, 검증을 우회하여 다시 시도합니다...")
+            old_verify_ssl = VERIFY_SSL
+            set_ssl_verification(False)
+            try:
+                # SentenceTransformerEmbeddingFunction에 device 인자를 직접 전달하도록 수정
+                base_ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_to_try, device=final_device_to_use)
+                EMBEDDING_MODEL_STATUS["actual_model"] = model_to_try
+                print(f"SSL 검증 우회 모드로 '{model_to_try}' 임베딩 모델 로드 성공 (장치: {final_device_to_use}).")
+                EMBEDDING_MODEL_STATUS["error_message"] = None # 성공했으므로 이전 오류 메시지 제거
+            except Exception as inner_e:
+                print(f"SSL 검증 우회 후에도 임베딩 모델 '{model_to_try}' 로드 실패: {inner_e}")
+                EMBEDDING_MODEL_STATUS["error_message"] = str(inner_e) # 새 오류 메시지로 업데이트
+            finally:
+                set_ssl_verification(old_verify_ssl) # SSL 설정 복원
+
+        # 1차 시도 (또는 SSL 우회 시도) 실패 시 기본 모델로 폴백
+        if base_ef is None:
+            print(f"'{model_to_try}' 모델 로드에 실패하여 기본 모델 '{get_default_embedding_model_name()}'로 폴백합니다.")
             EMBEDDING_MODEL_STATUS["fallback_used"] = True
-            EMBEDDING_MODEL_STATUS["error_message"] = str(e)
-    else:
-        # 먼저 SSL 검증 활성화 상태로 시도
-        try:
-            print(f"임베딩 모델 '{embedding_model}' 로드 시도 중...")
-            # sentence-transformers 기반 임베딩 함수 생성
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=embedding_model
-            )
-            print(f"임베딩 모델 '{embedding_model}' 로드 성공!")
-            EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
-            EMBEDDING_MODEL_STATUS["fallback_used"] = False
-        except Exception as e:
-            print(f"임베딩 모델 '{embedding_model}' 로드 중 오류 발생: {e}")
-            error_msg = str(e)
-            
-            # SSL 오류인 경우 검증 우회 시도
-            if "CERTIFICATE_VERIFY_FAILED" in error_msg or "SSL" in error_msg:
-                print("SSL 인증서 검증 실패, 검증을 우회하여 다시 시도합니다...")
+            try:
+                # 기본 모델은 항상 SSL 검증 활성화 상태로 시도
+                current_ssl_setting = VERIFY_SSL
+                if not current_ssl_setting: set_ssl_verification(True)
                 
-                # SSL 인증서 검증 비활성화
-                old_verify = VERIFY_SSL
-                set_ssl_verification(False)
+                # SentenceTransformerEmbeddingFunction에 device 인자를 직접 전달하도록 수정
+                base_ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=get_default_embedding_model_name(), device=final_device_to_use)
+                EMBEDDING_MODEL_STATUS["actual_model"] = get_default_embedding_model_name()
+                print(f"기본 임베딩 모델 '{get_default_embedding_model_name()}' 로드 성공 (장치: {final_device_to_use}).")
+                # 폴백 성공 시, 이전 오류 메시지는 유지 (왜 폴백했는지 알려주기 위함)
+                if not EMBEDDING_MODEL_STATUS["error_message"]: # 이전 오류가 없었다면 (이 경우는 거의 없음)
+                    EMBEDDING_MODEL_STATUS["error_message"] = f"'{model_to_try}' 로드 실패로 기본 모델 사용."
                 
-                try:
-                    # 검증 우회 모드로 다시 시도
-                    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                        model_name=embedding_model
-                    )
-                    print(f"SSL 검증 우회 모드로 '{embedding_model}' 임베딩 모델을 성공적으로 로드했습니다.")
-                    EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
-                    EMBEDDING_MODEL_STATUS["fallback_used"] = False
-                except Exception as inner_e:
-                    inner_error_msg = str(inner_e)
-                    print(f"SSL 검증을 우회해도 임베딩 모델 로드 실패: {inner_error_msg}")
-                    
-                    # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
-                    if "unrecognized model" in inner_error_msg.lower() or "no model with name" in inner_error_msg.lower():
-                        print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
-                        print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
-                        
-                        try:
-                            # 기본 모델로 대체
-                            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                                model_name="all-MiniLM-L6-v2"
-                            )
-                            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
-                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
-                        except Exception:
-                            print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
-                            embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
-                    else:
-                        print("내장 기본 임베딩 함수를 사용합니다.")
-                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                        EMBEDDING_MODEL_STATUS["error_message"] = inner_error_msg
-                
-                # SSL 인증서 검증 상태 복원
-                set_ssl_verification(old_verify)
-            else:
-                # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
-                if "unrecognized model" in error_msg.lower() or "no model with name" in error_msg.lower():
-                    print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
-                    print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
-                    
-                    try:
-                        # 기본 모델로 대체
-                        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                            model_name="all-MiniLM-L6-v2"
-                        )
-                        EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
-                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
-                    except Exception:
-                        print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
-                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
-                else:
-                    print("내장 기본 임베딩 함수를 사용합니다.")
-                    embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                    EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                    EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                    EMBEDDING_MODEL_STATUS["error_message"] = error_msg
-    
-    # 기본 임베딩 함수
-    base_embedding_function = _get_base_embedding_function(embedding_model)
-    
-    # 캐싱 기능이 활성화된 경우 래퍼 함수 생성
+                if not current_ssl_setting: set_ssl_verification(False) # 원래 SSL 설정으로 복원
+
+            except Exception as fallback_e:
+                print(f"기본 임베딩 모델 '{get_default_embedding_model_name()}' 로드 중 오류 발생: {fallback_e}")
+                EMBEDDING_MODEL_STATUS["error_message"] = f"요청 모델 실패({str(e)}), 기본 모델도 실패({str(fallback_e)})"
+
+    # 모든 SentenceTransformer 모델 로드 실패 시 ChromaDB 기본 임베딩 함수 사용
+    if base_ef is None:
+        print("모든 SentenceTransformer 모델 로드에 실패하여 ChromaDB 내장 기본 임베딩 함수를 사용합니다.")
+        base_ef = embedding_functions.DefaultEmbeddingFunction()
+        EMBEDDING_MODEL_STATUS["actual_model"] = "chromadb_default_ef"
+        EMBEDDING_MODEL_STATUS["fallback_used"] = True
+        EMBEDDING_MODEL_STATUS["device_used"] = "cpu" # DefaultEmbeddingFunction은 CPU 사용
+        if not EMBEDDING_MODEL_STATUS["error_message"]: # 이전 오류 메시지가 없다면
+             EMBEDDING_MODEL_STATUS["error_message"] = "SentenceTransformer 모델 로드 불가."
+
+    # OOM 안전 래퍼 적용
+    actual_model_name_for_oom = EMBEDDING_MODEL_STATUS.get("actual_model", get_default_embedding_model_name())
+    # base_ef가 None일 수 있는 경우 (모든 모델 로드 실패) 처리 - DefaultEmbeddingFunction은 OOM 발생 안 함
+    oom_safe_base_ef = _create_oom_safe_embedding_function(base_ef, EMBEDDING_MODEL_STATUS, actual_model_name_for_oom) if base_ef else base_ef
+
     if use_cache:
         def cached_embedding_function(texts: List[str]) -> List[List[float]]:
             """
@@ -235,7 +298,7 @@ def get_embedding_function(embedding_model="all-MiniLM-L6-v2", use_cache=True):
                 List[List[float]]: 임베딩 벡터 목록
             """
             global CACHE_HITS, CACHE_MISSES, EMBEDDING_CACHE
-            
+            nonlocal oom_safe_base_ef # OOM 안전 래퍼를 사용
             # 캐시에서 히트한 텍스트와 미스한 텍스트 분리
             cached_vectors = {}
             texts_to_embed = []
@@ -257,7 +320,10 @@ def get_embedding_function(embedding_model="all-MiniLM-L6-v2", use_cache=True):
             
             # 캐시되지 않은 텍스트 임베딩
             if texts_to_embed:
-                new_embeddings = base_embedding_function(texts_to_embed)
+                if oom_safe_base_ef is None: # 모든 모델 로드 실패 시
+                    logger.error("No embedding function available for encoding.")
+                    raise ValueError("Embedding function could not be initialized.")
+                new_embeddings = oom_safe_base_ef(texts_to_embed)
                 
                 # 새로운 임베딩 캐싱 및 결과에 추가
                 for i, embedding in enumerate(new_embeddings):
@@ -282,126 +348,7 @@ def get_embedding_function(embedding_model="all-MiniLM-L6-v2", use_cache=True):
         
         return cached_embedding_function
     else:
-        return base_embedding_function
-
-def _get_base_embedding_function(embedding_model="all-MiniLM-L6-v2"):
-    """
-    기본 임베딩 함수를 생성합니다. (내부 함수)
-    
-    Args:
-        embedding_model (str): 임베딩 모델 이름
-        
-    Returns:
-        function: 기본 임베딩 함수
-    """
-    global EMBEDDING_MODEL_STATUS
-    
-    # 임베딩 함수 설정
-    if embedding_model == "default" or embedding_model is None:
-        # 기본 임베딩 모델(all-MiniLM-L6-v2) 명시적으로 사용
-        try:
-            print("기본 임베딩 모델(all-MiniLM-L6-v2)을 로드합니다.")
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
-            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
-            EMBEDDING_MODEL_STATUS["fallback_used"] = False
-        except Exception as e:
-            print(f"기본 임베딩 모델 로드 중 오류 발생: {e}")
-            print("내장 기본 임베딩 함수를 사용합니다.")
-            embedding_function = embedding_functions.DefaultEmbeddingFunction()
-            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-            EMBEDDING_MODEL_STATUS["fallback_used"] = True
-            EMBEDDING_MODEL_STATUS["error_message"] = str(e)
-    else:
-        # 먼저 SSL 검증 활성화 상태로 시도
-        try:
-            print(f"임베딩 모델 '{embedding_model}' 로드 시도 중...")
-            # sentence-transformers 기반 임베딩 함수 생성
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=embedding_model
-            )
-            print(f"임베딩 모델 '{embedding_model}' 로드 성공!")
-            EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
-            EMBEDDING_MODEL_STATUS["fallback_used"] = False
-        except Exception as e:
-            print(f"임베딩 모델 '{embedding_model}' 로드 중 오류 발생: {e}")
-            error_msg = str(e)
-            
-            # SSL 오류인 경우 검증 우회 시도
-            if "CERTIFICATE_VERIFY_FAILED" in error_msg or "SSL" in error_msg:
-                print("SSL 인증서 검증 실패, 검증을 우회하여 다시 시도합니다...")
-                
-                # SSL 인증서 검증 비활성화
-                old_verify = VERIFY_SSL
-                set_ssl_verification(False)
-                
-                try:
-                    # 검증 우회 모드로 다시 시도
-                    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                        model_name=embedding_model
-                    )
-                    print(f"SSL 검증 우회 모드로 '{embedding_model}' 임베딩 모델을 성공적으로 로드했습니다.")
-                    EMBEDDING_MODEL_STATUS["actual_model"] = embedding_model
-                    EMBEDDING_MODEL_STATUS["fallback_used"] = False
-                except Exception as inner_e:
-                    inner_error_msg = str(inner_e)
-                    print(f"SSL 검증을 우회해도 임베딩 모델 로드 실패: {inner_error_msg}")
-                    
-                    # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
-                    if "unrecognized model" in inner_error_msg.lower() or "no model with name" in inner_error_msg.lower():
-                        print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
-                        print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
-                        
-                        try:
-                            # 기본 모델로 대체
-                            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                                model_name="all-MiniLM-L6-v2"
-                            )
-                            EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
-                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
-                        except Exception:
-                            print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
-                            embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                            EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                            EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                            EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
-                    else:
-                        print("내장 기본 임베딩 함수를 사용합니다.")
-                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                        EMBEDDING_MODEL_STATUS["error_message"] = inner_error_msg
-                
-                # SSL 인증서 검증 상태 복원
-                set_ssl_verification(old_verify)
-            else:
-                # 'unrecognized model' 오류 또는 'No model with name' 오류인 경우 상세 정보 출력
-                if "unrecognized model" in error_msg.lower() or "no model with name" in error_msg.lower():
-                    print(f"모델 '{embedding_model}'이(가) 인식되지 않습니다. 해당 모델이 Hugging Face에 존재하는지 확인하세요.")
-                    print("대신 기본 임베딩 모델(all-MiniLM-L6-v2)을 사용합니다.")
-                    
-                    try:
-                        # 기본 모델로 대체
-                        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                            model_name="all-MiniLM-L6-v2"
-                        )
-                        EMBEDDING_MODEL_STATUS["actual_model"] = "all-MiniLM-L6-v2"
-                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않아 기본 모델로 대체됨"
-                    except Exception:
-                        print("기본 임베딩 모델도 로드 실패, 내장 기본 임베딩 함수를 사용합니다.")
-                        embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                        EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                        EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                        EMBEDDING_MODEL_STATUS["error_message"] = f"모델 '{embedding_model}'이(가) 인식되지 않고, 기본 모델 로드도 실패함"
-                else:
-                    print("내장 기본 임베딩 함수를 사용합니다.")
-                    embedding_function = embedding_functions.DefaultEmbeddingFunction()
-                    EMBEDDING_MODEL_STATUS["actual_model"] = "default_embedding_function"
-                    EMBEDDING_MODEL_STATUS["fallback_used"] = True
-                    EMBEDDING_MODEL_STATUS["error_message"] = error_msg
-    
-    return embedding_function
+        return oom_safe_base_ef
 
 class L2NormalizedEmbeddingFunction:
     """
@@ -503,19 +450,31 @@ class L2NormalizedEmbeddingFunction:
                 
             return normalized_embeddings
 
-def get_normalized_embedding_function(embedding_model="all-MiniLM-L6-v2", use_cache=True):
+    def name(self):
+        """
+        래핑된 기본 임베딩 함수의 이름을 반환합니다.
+        ChromaDB의 내부 검증을 위해 필요합니다.
+        """
+        # 래핑된 기본 임베딩 함수가 name 속성을 가지고 있는지 확인
+        if hasattr(self.base_embedding_function, 'name'):
+            return self.base_embedding_function.name()
+        # 기본 함수가 name 속성이 없는 경우 (드물지만 안전 장치)
+        return "L2NormalizedEmbeddingFunction" # 또는 적절한 기본 이름
+
+def get_normalized_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache=True, device_preference="auto"):
     """
     L2 정규화가 적용된 임베딩 함수를 생성합니다.
     
     Args:
-        embedding_model (str): 임베딩 모델 이름
+        embedding_model_request (str): 사용자가 요청한 임베딩 모델 이름
         use_cache (bool): 캐시 사용 여부
+        device_preference (str): 사용할 장치 ("auto", "cuda", "cpu")
         
     Returns:
         L2NormalizedEmbeddingFunction: L2 정규화된 임베딩 함수
     """
     # 기본 임베딩 함수 생성
-    base_function = get_embedding_function(embedding_model, use_cache=False)
+    base_function = get_embedding_function(embedding_model_request, use_cache=False, device_preference=device_preference)
     
     # L2 정규화 래퍼 적용
     return L2NormalizedEmbeddingFunction(base_function, use_cache=use_cache)
@@ -529,7 +488,7 @@ def get_available_embedding_models():
     """
     return {
         "다국어 모델": [
-            "all-MiniLM-L6-v2",  # 기본 모델
+            get_default_embedding_model_name(),  # 기본 모델
             "paraphrase-multilingual-MiniLM-L12-v2",  # 다국어 지원 모델
             "distiluse-base-multilingual-cased-v2"  # 다국어 지원 모델 (크기 큼)
         ],

@@ -10,7 +10,9 @@ from utils import (
     preprocess_dataframe,
     get_available_collections,
     get_available_embedding_models,
-    get_embedding_status
+    get_embedding_status,
+    is_gpu_available, # GPU 확인 함수 임포트
+    get_gpu_info      # GPU 정보 함수 임포트
 )
 
 # 로깅 설정
@@ -47,6 +49,8 @@ if 'collection_name' not in st.session_state:
     st.session_state.collection_name = "csv_test"
 if 'embedding_model' not in st.session_state:
     st.session_state.embedding_model = "all-MiniLM-L6-v2"  # 기본 임베딩 모델
+if 'embedding_device_preference' not in st.session_state:
+    st.session_state.embedding_device_preference = "auto" # 기본 장치 설정
 
 # 제목
 st.title("CSV 파일 업로드 및 처리")
@@ -316,6 +320,31 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
         # 선택한 모델 세션 상태에 저장
         st.session_state.embedding_model = selected_embedding_model
         
+        # 하드웨어 가속 설정 (임베딩)
+        st.subheader("하드웨어 가속 설정 (임베딩)")
+        gpu_info_data = get_gpu_info() # embedding_utils에서 임포트
+
+        if gpu_info_data["available"]:
+            st.success(f"✅ GPU 사용 가능: {gpu_info_data['count']}개의 GPU 감지됨.")
+            for i, gpu_device in enumerate(gpu_info_data["devices"]):
+                st.markdown(f"  - GPU {i}: {gpu_device['name']} (메모리: {gpu_device['memory_total']:.2f} GB)")
+            
+            device_options_map = {
+                "자동 (GPU 우선 사용)": "auto",
+                "GPU 강제 사용": "cuda",
+                "CPU 전용 사용": "cpu"
+            }
+            selected_device_label = st.radio(
+                "임베딩 연산 장치 선택",
+                options=list(device_options_map.keys()),
+                index=list(device_options_map.values()).index(st.session_state.embedding_device_preference), # 세션 상태 값으로 기본값 설정
+                help="임베딩 계산에 사용할 장치를 선택합니다. '자동'은 GPU가 있으면 GPU를, 없으면 CPU를 사용합니다."
+            )
+            st.session_state.embedding_device_preference = device_options_map[selected_device_label]
+        else:
+            st.info("ℹ️ 사용 가능한 GPU가 감지되지 않았습니다. 임베딩 연산은 CPU를 사용합니다.")
+            st.session_state.embedding_device_preference = "cpu"
+
         # ChromaDB 저장 버튼
         if st.button("ChromaDB에 데이터 저장"):
             if not selected_columns:
@@ -329,6 +358,7 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
                         # 진행 상황 표시
                         progress_bar = st.progress(0)
                         status_text = st.empty()
+                        gpu_status_placeholder = st.empty() # GPU 상태 표시용
                         
                         client, collection = store_data_in_chroma(
                             df, 
@@ -338,8 +368,10 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
                             max_rows=max_process_rows,
                             batch_size=batch_size,
                             embedding_model=st.session_state.embedding_model,  # 선택한 임베딩 모델 전달
+                            embedding_device_preference=st.session_state.embedding_device_preference, # 선택한 장치 설정 전달
                             progress_bar=progress_bar,
-                            status_text=status_text
+                            status_text=status_text,
+                            gpu_status_placeholder=gpu_status_placeholder # GPU 상태 플레이스홀더 전달
                         )
                         
                         st.session_state.chroma_client = client
@@ -350,14 +382,20 @@ if uploaded_file is not None or (file_path and os.path.isfile(file_path)):
                         # 임베딩 모델 상태 확인
                         embedding_status = get_embedding_status()
                         if embedding_status["fallback_used"]:
-                            st.warning(f"""
-                            ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.
+                            warning_message = f"""
+                            ⚠️ **임베딩 모델 변경됨**:
                             - 요청 모델: {embedding_status["requested_model"]}
-                            - 사용된 모델: {embedding_status["actual_model"]}
-                            - 원인: {embedding_status["error_message"]}
-                            """)
-                        
-                        if max_process_rows:
+                            - 실제 사용 모델: {embedding_status["actual_model"]}
+                            - 사용된 장치: {embedding_status["device_used"]} (요청: {embedding_status["device_preference"]})
+                            """
+                            if embedding_status["error_message"]:
+                                warning_message += f"\n- 원인: {embedding_status['error_message']}"
+                            st.warning(warning_message)
+                        else:
+                            st.info(f"임베딩 모델: {embedding_status['actual_model']}, 사용 장치: {embedding_status['device_used']} (요청: {embedding_status['device_preference']})")
+                        if embedding_status.get("error_message") and "GPU OOM" in embedding_status["error_message"]:
+                            st.info("GPU 메모리 부족으로 일부 또는 전체 배치가 CPU에서 처리되었을 수 있습니다. 자세한 내용은 로그를 확인하세요.")
+                        if max_process_rows is not None: # 0이 아닌 경우 (제한이 있는 경우)
                             st.success(f"ChromaDB에 데이터가 성공적으로 저장되었습니다. 컬렉션: {collection_name} (처리된 행 수: {max_process_rows})")
                         else:
                             st.success(f"ChromaDB에 데이터가 성공적으로 저장되었습니다. 컬렉션: {collection_name}")

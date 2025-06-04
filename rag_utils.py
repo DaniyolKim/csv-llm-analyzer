@@ -1,11 +1,12 @@
 """
 RAG(Retrieval-Augmented Generation) 시스템 관련 유틸리티 함수 모음
 """
+from typing import Dict, Any, Optional, List
 from text_utils import clean_text
 from ollama_utils import query_ollama, chat_with_ollama
 from chroma_utils import hybrid_query_chroma
-
-def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, similarity_threshold=None):
+def rag_query_with_ollama(collection, query: str, model_name: str = "llama2", n_results: int = 5, 
+                          similarity_threshold: Optional[float] = None, ollama_options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     RAG 시스템에 질의합니다.
     
@@ -15,6 +16,7 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
         model_name (str): Ollama 모델 이름
         n_results (int): 검색할 결과 수, 0이면 최대 20개 문서 사용, 최소 3개 문서 사용
         similarity_threshold (float, optional): 유사도 임계값 (0~1 사이). 이 값보다 유사도가 낮은 문서는 제외됨
+        ollama_options (Optional[Dict[str, Any]]): Ollama API에 전달할 추가 옵션
         
     Returns:
         dict: 질의 결과
@@ -104,7 +106,7 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
     답변:
     """
     
-    response = query_ollama(prompt, model_name)
+    response = query_ollama(prompt, model_name, ollama_options=ollama_options)
     
     return {
         "query": query,
@@ -115,8 +117,8 @@ def rag_query_with_ollama(collection, query, model_name="llama2", n_results=5, s
         "response": response
     }
 
-def rag_chat_with_ollama(collection, query, model_name="llama2", n_results=5, 
-                          similarity_threshold=None, system_prompt=None, chat_history=None):
+def rag_chat_with_ollama(collection, query: str, model_name: str = "llama2", n_results: int = 5, 
+                          similarity_threshold: Optional[float] = None, system_prompt: Optional[str] = None, chat_history: Optional[List[Dict[str, str]]] = None, ollama_options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     역할 기반 대화를 지원하는 RAG 시스템에 질의합니다.
     
@@ -128,6 +130,7 @@ def rag_chat_with_ollama(collection, query, model_name="llama2", n_results=5,
         similarity_threshold (float, optional): 유사도 임계값 (0~1 사이)
         system_prompt (str, optional): 시스템 프롬프트
         chat_history (list, optional): 이전 대화 기록 [{'role': 'user|assistant', 'content': '내용'}, ...]
+        ollama_options (Optional[Dict[str, Any]]): Ollama API에 전달할 추가 옵션
         
     Returns:
         dict: 질의 결과
@@ -207,7 +210,7 @@ def rag_chat_with_ollama(collection, query, model_name="llama2", n_results=5,
     messages.append({"role": "user", "content": query})
     
     # 역할 기반 대화 실행
-    response = chat_with_ollama(messages, model_name)
+    response = chat_with_ollama(messages, model_name, ollama_options=ollama_options)
     
     return {
         "query": query,
@@ -218,8 +221,8 @@ def rag_chat_with_ollama(collection, query, model_name="llama2", n_results=5,
         "messages": messages
     }
 
-def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_results=5, 
-                                  similarity_threshold=None, metadata_filter=None):
+def rag_query_with_metadata_filter(collection, query: str, model_name: str = "llama2", n_results: int = 5, 
+                                  similarity_threshold: Optional[float] = None, metadata_filter: Optional[Dict[str, Any]] = None, ollama_options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     메타데이터 필터링을 지원하는 RAG 시스템에 질의합니다.
     
@@ -230,6 +233,7 @@ def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_res
         n_results (int): 검색할 결과 수
         similarity_threshold (float, optional): 유사도 임계값 (0~1 사이)
         metadata_filter (dict, optional): 메타데이터 필터 (예: {"source": "row_1"})
+        ollama_options (Optional[Dict[str, Any]]): Ollama API에 전달할 추가 옵션
         
     Returns:
         dict: 질의 결과
@@ -329,7 +333,7 @@ def rag_query_with_metadata_filter(collection, query, model_name="llama2", n_res
     답변:
     """
     
-    response = query_ollama(prompt, model_name)
+    response = query_ollama(prompt, model_name, ollama_options=ollama_options)
     
     return {
         "query": query,

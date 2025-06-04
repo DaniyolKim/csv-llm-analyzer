@@ -7,7 +7,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-from chroma_utils import load_chroma_collection, get_available_collections
+# 필요한 유틸리티 함수 임포트 (get_embedding_status 추가)
+from utils import load_chroma_collection, get_available_collections, get_embedding_function, get_embedding_status
 from text_utils import KOREAN_STOPWORDS
 
 # 모듈 임포트 방식 변경
@@ -32,6 +33,8 @@ if 'current_collection_name' not in st.session_state:
     st.session_state.current_collection_name = None
 if 'current_db_path' not in st.session_state:
     st.session_state.current_db_path = None
+if 'embedding_model' not in st.session_state: # 임베딩 모델 세션 상태 추가
+    st.session_state.embedding_model = None
 # 시각화 관련 세션 상태 추가
 if 'viz_completed' not in st.session_state:
     st.session_state.viz_completed = False
@@ -79,6 +82,7 @@ def setup_sidebar():
             st.session_state.collection_loaded = False
             st.session_state.chroma_client = None
             st.session_state.chroma_collection = None
+            st.session_state.embedding_model = None # 임베딩 모델도 초기화
         else:
             selected_collection = st.selectbox(
                 "컬렉션 선택",
@@ -93,22 +97,97 @@ def setup_sidebar():
                 st.session_state.collection_loaded = False
                 st.session_state.current_collection_name = selected_collection
                 st.session_state.current_db_path = db_path
+                st.session_state.embedding_model = None # 컬렉션 변경 시 임베딩 모델 초기화
                 
         # 컬렉션 로드 버튼
         if selected_collection and not st.session_state.collection_loaded:        
             if st.button("컬렉션 로드", key="load_collection_btn"):
                 with st.spinner("컬렉션을 로드하는 중..."):
                     try:
+                        # load_chroma_collection 함수는 이제 utils.py에 있습니다.
+                        # 이 함수 내부에서 임베딩 모델을 로드하고 컬렉션 객체에 연결합니다.
+                        # 하지만 st.cache_resource를 사용하기 위해 여기서 직접 임베딩 함수를 가져와 세션에 저장합니다.
                         client, collection = load_chroma_collection(
                             collection_name=selected_collection,
                             persist_directory=db_path
+                            # load_chroma_collection 내부에서 임베딩 모델을 로드하므로 여기서는 device_preference를 전달하지 않습니다.
+                            # load_chroma_collection 함수가 컬렉션 메타데이터에서 모델 정보를 가져와 로드합니다.
                         )
+                        
+                        # 컬렉션 메타데이터에서 임베딩 모델 정보 가져오기 (저장 시 사용된 모델)
+                        # load_chroma_collection 함수가 이미 임베딩 함수를 컬렉션에 연결했으므로,
+                        # 여기서는 해당 임베딩 함수를 가져와 세션 상태에 저장합니다.
+                        # collection._embedding_function 속성을 직접 사용하는 것은 내부 구현에 의존하므로 권장되지 않습니다.
+                        # 대신, 컬렉션 메타데이터에서 모델 이름을 가져와 get_embedding_function을 다시 호출하는 것이 안전합니다.
+                        # get_embedding_function은 st.cache_resource가 적용되어 있으므로 중복 로드되지 않습니다.
+                        embedding_model_name = collection.metadata.get("embedding_model", "all-MiniLM-L6-v2") # 기본값
+                        
+                        # 임베딩 모델 로드 (st.cache_resource 덕분에 한 번만 로드됨)
+                        # load_chroma_collection에서 이미 로드되었을 가능성이 높지만, 안전하게 다시 호출합니다.
+                        # load_chroma_collection에서 사용된 device_preference를 알 수 없으므로 'auto'를 사용합니다.
+                        # 더 정확하게 하려면 load_chroma_collection에서 사용된 device_preference도 반환하도록 수정해야 합니다.
+                        # 현재 구조에서는 컬렉션 로드 시 임베딩 모델 로드와 세션 저장을 분리하는 것이 더 명확합니다.
+                        
+                        # 임베딩 모델 로드 (st.cache_resource 덕분에 한 번만 로드됨)
+                        # 컬렉션 메타데이터에 저장된 모델 이름으로 임베딩 함수를 가져옵니다.
+                        # load_chroma_collection 함수는 임베딩 함수를 컬렉션 객체에 연결하지만,
+                        # Streamlit 세션 상태에서 직접 관리하기 위해 여기서 다시 가져옵니다.
+                        # get_embedding_function은 st.cache_resource가 적용되어 있어 효율적입니다.
+                        
+                        # 컬렉션 로드 시 임베딩 모델 로드 및 세션 저장
+                        # load_chroma_collection 함수는 이제 임베딩 함수를 컬렉션 객체에 연결합니다.
+                        # 우리는 이 연결된 임베딩 함수를 세션 상태에 저장하여 재사용할 것입니다.
+                        # collection._embedding_function 속성을 직접 사용하는 것은 내부 구현에 의존하므로
+                        # 컬렉션 메타데이터에서 모델 이름을 가져와 get_embedding_function을 호출하는 것이 더 안전합니다.
+                        
+                        # 컬렉션 메타데이터에서 임베딩 모델 이름 가져오기
+                        embedding_model_name = collection.metadata.get("embedding_model", "all-MiniLM-L6-v2") # 기본값
+                        
+                        # 임베딩 모델 로드 (st.cache_resource 덕분에 한 번만 로드됨)
+                        # load_chroma_collection에서 사용된 device_preference를 알 수 없으므로 'auto'를 사용합니다.
+                        # 만약 load_chroma_collection에서 특정 device_preference를 사용했다면,
+                        # 해당 정보를 메타데이터에 저장하거나 load_chroma_collection에서 반환하도록 수정해야 합니다.
+                        # 현재는 'auto'로 가정하고 로드합니다.
+                        embedding_model_func = get_embedding_function(embedding_model_name, device_preference="auto")
+                        
+                        if embedding_model_func is None:
+                             st.error("임베딩 모델 로드에 실패했습니다. 애플리케이션을 다시 시작하거나 다른 모델을 시도하세요.")
+                             # 로드 실패 시 세션 상태 초기화
+                             st.session_state.chroma_client = None
+                             st.session_state.chroma_collection = None
+                             st.session_state.collection_loaded = False
+                             st.session_state.embedding_model = None
+                             return # 함수 종료
+                             
                         st.session_state.chroma_client = client
                         st.session_state.chroma_collection = collection
+                        st.session_state.embedding_model = embedding_model_func # 로드된 임베딩 함수 저장
                         st.session_state.collection_loaded = True
                         st.success(f"컬렉션 '{selected_collection}'을 성공적으로 로드했습니다.")
+                        
+                        # 임베딩 모델 로드 상태 표시
+                        embedding_status = get_embedding_function(embedding_model_name, device_preference="auto", use_cache=True) # 상태 확인용으로 다시 호출 (캐시 사용)
+                        status_info = get_embedding_status()
+                        if status_info["fallback_used"]:
+                             st.warning(f"""
+                             ⚠️ **임베딩 모델 변경됨**: 요청하신 모델 대신 기본 임베딩 모델이 사용되었습니다.
+                             - 요청 모델: {status_info["requested_model"]}
+                             - 사용된 모델: {status_info["actual_model"]}
+                             - 사용된 장치: {status_info["device_used"]} (요청: {status_info["device_preference"]})
+                             """)
+                             if status_info["error_message"]:
+                                 st.warning(f"- 원인: {status_info['error_message']}")
+                        else:
+                             st.info(f"✅ 임베딩 모델 로드됨: {status_info['actual_model']} (장치: {status_info['device_used']})")
+
+
                     except Exception as e:
                         st.error(f"컬렉션 로드 중 오류 발생: {e}")
+                        # 오류 발생 시 세션 상태 초기화
+                        st.session_state.chroma_client = None
+                        st.session_state.chroma_collection = None
+                        st.session_state.collection_loaded = False
+                        st.session_state.embedding_model = None
         
         # 컬렉션이 로드된 경우 상태 표시
         if st.session_state.collection_loaded:
@@ -131,6 +210,19 @@ def setup_sidebar():
                     st.write(f"문서 수: {collection_info}")
                     st.write(f"임베딩 모델: {embedding_model}")
                     st.write(f"DB 경로: {db_path}")
+                    
+                    # 현재 로드된 임베딩 모델 상태 표시 (세션 상태 기준)
+                    if st.session_state.embedding_model:
+                         status_info = get_embedding_status() # utils에서 상태 가져옴
+                         st.write(f"**현재 사용 중인 임베딩 모델:** {status_info.get('actual_model', 'N/A')}")
+                         st.write(f"**사용 장치:** {status_info.get('device_used', 'N/A')} (요청: {status_info.get('device_preference', 'N/A')})")
+                         if status_info.get('fallback_used'):
+                             st.warning("모델 로드 시 폴백(fallback)이 사용되었습니다.")
+                             if status_info.get('error_message'):
+                                 st.warning(f"  - 원인: {status_info['error_message']}")
+                    else:
+                         st.warning("임베딩 모델이 로드되지 않았습니다.")
+                         
                 except Exception as e:
                     st.error(f"컬렉션 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
     
@@ -142,6 +234,10 @@ def render_collection_data_tab(selected_collection):
     
     # 데이터 로드 버튼
     if st.button("데이터 표시", key="show_data_btn"):
+        if not st.session_state.collection_loaded or st.session_state.chroma_collection is None:
+            st.error("먼저 사이드바에서 컬렉션을 로드하세요.")
+            return
+            
         with st.spinner("데이터를 가져오는 중..."):
             try:
                 # 이미 로드된 컬렉션 사용
@@ -205,6 +301,16 @@ def render_search_tab():
     
     # 검색 실행
     if search_button and query:
+        if not st.session_state.collection_loaded or st.session_state.chroma_collection is None:
+            st.error("먼저 사이드바에서 컬렉션을 로드하세요.")
+            return
+        
+        # 세션 상태에서 임베딩 함수 가져오기
+        embed_fn = st.session_state.embedding_model
+        if embed_fn is None:
+             st.error("임베딩 모델이 로드되지 않았습니다. 컬렉션을 다시 로드해 보세요.")
+             return
+             
         with st.spinner("검색 중..."):
             try:
                 # 이미 로드된 컬렉션 사용
@@ -214,8 +320,10 @@ def render_search_tab():
                 # 시각화에 사용할 경우 임베딩도 함께 가져옴
                 if use_search_for_viz:
                     # 새로운 함수 사용 - 모든 문서 대상 검색 (1000개 제한 해결)
+                    # 임베딩 모델을 인자로 전달
                     result_df, embeddings = db_search_utils.search_collection_by_similarity_full(
                         collection, query, similarity_threshold, include_embeddings=True
+                        , embed_fn=embed_fn # 임베딩 함수 전달
                     )
                     # 검색 결과 및 임베딩 저장 (시각화에 사용)
                     st.session_state.search_results_for_viz = {
@@ -229,8 +337,10 @@ def render_search_tab():
                         st.success(f"{len(result_df)}개의 문서가 시각화를 위해 준비되었습니다. '시각화' 탭으로 이동하세요.")
                 else:
                     # 새로운 함수 사용 - 모든 문서 대상 검색 (1000개 제한 해결)
+                    # 임베딩 모델을 인자로 전달
                     result_df = db_search_utils.search_collection_by_similarity_full(
                         collection, query, similarity_threshold
+                        , embed_fn=embed_fn # 임베딩 함수 전달
                     )
                 
                 # 검색 결과 저장 (삭제 기능을 위해)
@@ -245,6 +355,7 @@ def render_search_tab():
                 
             except Exception as e:
                 st.error(f"검색 중 오류가 발생했습니다: {str(e)}")
+                st.exception(e) # 상세 오류 정보 표시
     elif st.session_state.last_search_results is not None:
         # 이전 검색 결과 재표시
         selected_docs = db_search_utils.display_search_results(st.session_state.last_search_results)
@@ -257,6 +368,10 @@ def render_search_tab():
 def delete_selected_documents(selected_docs):
     """선택한 문서를 컬렉션에서 삭제하는 함수"""
     try:
+        if not st.session_state.collection_loaded or st.session_state.chroma_collection is None:
+            st.error("컬렉션이 로드되지 않아 문서를 삭제할 수 없습니다.")
+            return
+            
         # 이미 로드된 컬렉션 사용
         collection = st.session_state.chroma_collection
         
@@ -264,7 +379,8 @@ def delete_selected_documents(selected_docs):
         if "ID" in selected_docs.columns:
             doc_ids = selected_docs["ID"].tolist()
         else:
-            # 선택된 문서의 내용으로 ID 찾기
+            # 선택된 문서의 내용으로 ID 찾기 (비효율적일 수 있음)
+            st.warning("검색 결과에 문서 ID가 포함되어 있지 않아 내용 기반으로 ID를 찾습니다. 시간이 오래 걸릴 수 있습니다.")
             docs_to_delete = selected_docs["내용"].tolist()
             # 컬렉션에서 모든 문서 가져와서 내용이 일치하는 것의 ID 찾기
             all_docs, all_data = db_search_utils.load_collection_data(collection)
@@ -274,8 +390,10 @@ def delete_selected_documents(selected_docs):
                     # 내용이 일치하는 문서의 ID 찾기
                     matching_rows = all_docs[all_docs["내용"] == doc]
                     if not matching_rows.empty:
-                        for _, row in matching_rows.iterrows():
-                            doc_ids.append(row["ID"])
+                        # 중복 ID 방지를 위해 set 사용 후 list로 변환
+                        found_ids = matching_rows["ID"].tolist()
+                        doc_ids.extend(found_ids)
+                doc_ids = list(set(doc_ids)) # 중복 제거
             else:
                 st.error("문서 ID를 찾을 수 없어 삭제할 수 없습니다.")
                 return
@@ -293,10 +411,9 @@ def delete_selected_documents(selected_docs):
             
             # 마지막 검색 결과에서 삭제된 문서 제거
             if st.session_state.last_search_results is not None:
-                # 내용 기반으로 삭제된 문서 필터링
-                contents_to_delete = selected_docs["내용"].tolist()
+                # ID 기반으로 삭제된 문서 필터링
                 st.session_state.last_search_results = st.session_state.last_search_results[
-                    ~st.session_state.last_search_results["내용"].isin(contents_to_delete)
+                    ~st.session_state.last_search_results["ID"].isin(doc_ids)
                 ]
                 
             # 페이지 리프레시 (최신 Streamlit 버전 호환성)
@@ -304,11 +421,16 @@ def delete_selected_documents(selected_docs):
             
     except Exception as e:
         st.error(f"문서 삭제 중 오류가 발생했습니다: {str(e)}")
+        st.exception(e) # 상세 오류 정보 표시
 
 # 시각화 탭 UI
 def render_visualization_tab(selected_collection):
     st.subheader(f"컬렉션 시각화: {selected_collection}")
     
+    if not st.session_state.collection_loaded or st.session_state.chroma_collection is None:
+        st.info("먼저 사이드바에서 컬렉션을 로드하세요.")
+        return
+        
     # 시각화 설정
     with st.expander("시각화 설정", expanded=True):
         # 검색 결과를 시각화에 사용할지 여부 확인
@@ -332,7 +454,7 @@ def render_visualization_tab(selected_collection):
             total_docs = 0
         
         # 검색 결과를 사용하지 않을 경우에만 문서 비율 슬라이더 표시
-        if not use_search_results:
+        if not (use_search_results and search_results_available):
             # 문서 비율 설정 슬라이더 (백분율) - 라벨에 실제 문서 수 표시
             docs_percentage = st.slider(
                 "사용할 문서 비율(%)",
@@ -346,7 +468,12 @@ def render_visualization_tab(selected_collection):
             
             # 슬라이더 값이 변경될 때마다 라벨 업데이트
             st.markdown(f"<p style='margin-top:-15px; font-size:0.85em;'>선택된 문서 수: {max(1, int(total_docs * docs_percentage / 100))}개 (전체 {total_docs}개 중)</p>", unsafe_allow_html=True)
-        
+        else:
+             # 검색 결과를 사용하는 경우 문서 비율 슬라이더를 숨기거나 비활성화
+             docs_percentage = 100 # 검색 결과는 100% 사용으로 간주
+             st.markdown(f"<p style='margin-top:-15px; font-size:0.85em;'>검색 결과 문서 수: {len(search_df)}개</p>", unsafe_allow_html=True)
+
+
         # 자동 최적 클러스터 수 찾기 옵션
         find_optimal = st.checkbox(
             "최적 클러스터 수 자동 찾기", 
@@ -354,8 +481,8 @@ def render_visualization_tab(selected_collection):
             help="실루엣 스코어를 사용하여 최적의 클러스터 수를 자동으로 찾습니다."
         )
         
+        # 클러스터 수 설정 (자동 찾기 옵션에 따라 활성화/비활성화)
         if find_optimal:
-            # 최대 클러스터 수 설정
             max_clusters = st.slider(
                 "최대 클러스터 수",
                 min_value=3,
@@ -365,7 +492,7 @@ def render_visualization_tab(selected_collection):
                 help="검색할 최대 클러스터 수를 설정합니다."
             )
             # 클러스터 수를 비활성화 표시용으로만 설정
-            n_clusters = st.slider(
+            n_clusters_input = st.slider(
                 "클러스터 수",
                 min_value=2,
                 max_value=20,
@@ -374,23 +501,26 @@ def render_visualization_tab(selected_collection):
                 help="자동 찾기 옵션이 켜져 있어 이 설정은 무시됩니다.",
                 disabled=True
             )
+            # 실제 사용될 n_clusters는 자동 찾기 결과로 결정됨
+            n_clusters = None # 초기값 None
         else:
             # 클러스터 수 설정
             n_clusters = st.slider(
                 "클러스터 수",
                 min_value=2,
                 max_value=20,
-                value=5,
+                value=st.session_state.get('n_clusters', 5), # 세션 상태에서 기본값 가져오기
                 step=1,
                 help="문서를 그룹화할 클러스터의 수를 설정합니다."
             )
+            max_clusters = None # 자동 찾기 사용 안 함
         
-        # 차원 축소 방법 선택
+        # t-SNE 복잡도 설정
         perplexity = st.slider(
             "t-SNE 복잡도(Perplexity)",
             min_value=5,
             max_value=50,
-            value=30,
+            value=st.session_state.get('perplexity', 30), # 세션 상태에서 기본값 가져오기
             step=5,
             help="""
             t-SNE 알고리즘의 핵심 매개변수로, 각 데이터 포인트 주변의 '유효 이웃 수'를 결정합니다.
@@ -418,6 +548,8 @@ def render_visualization_tab(selected_collection):
         if current_max_words_val != max_words_wc_slider:
             st.session_state.max_words_wc_slider = max_words_wc_slider
         
+        st.session_state.perplexity = perplexity # 세션 상태에 저장
+
         # LDA 토픽 수 설정은 여기서 제거하고 아래로 이동
     
     # 시각화 버튼
@@ -445,8 +577,8 @@ def render_visualization_tab(selected_collection):
                     
                     if not search_df.empty and len(search_embeddings) > 0:
                         # 검색 결과의 문서 수 표시
-                        total_docs = len(search_df)
-                        st.success(f"검색 결과 '{search_results_info['query']}'에서 {total_docs}개의 문서를 시각화합니다.")
+                        total_docs_for_viz = len(search_df)
+                        st.success(f"검색 결과 '{search_results_info['query']}'에서 {total_docs_for_viz}개의 문서를 시각화합니다.")
                         
                         # 검색 결과에서 필요한 데이터 추출
                         documents = search_df['내용'].tolist()
@@ -458,21 +590,50 @@ def render_visualization_tab(selected_collection):
                             metadata = {'source': row.get('source', '알 수 없음')}
                             if 'chunk' in row:
                                 metadata['chunk'] = row['chunk']
+                            if 'keywords' in row:
+                                metadata['keywords'] = row['keywords']
                             metadatas.append(metadata)
                         
                         # 임베딩 배열로 변환
                         import numpy as np
                         embeddings_array = np.array(search_embeddings)
                         
-                        # 최소 필요 문서 수 확인
-                        if total_docs < n_clusters:
-                            st.warning(f"검색 결과 문서 수({total_docs})가 클러스터 수({n_clusters})보다 적습니다. 클러스터 수를 줄이거나 검색 유사도 임계값을 낮춰보세요.")
-                            if total_docs < 3:
-                                st.error("시각화를 위해서는 최소 3개 이상의 문서가 필요합니다.")
-                                st.stop()
-                            else:
-                                n_clusters = max(2, total_docs // 2)
-                                st.info(f"클러스터 수를 {n_clusters}로 자동 조정합니다.")
+                        # 최소 필요 문서 수 확인 (클러스터링을 위해)
+                        min_docs_for_clustering = 3 # 최소 3개 문서 필요 (t-SNE, KMeans)
+                        if total_docs_for_viz < min_docs_for_clustering:
+                             st.warning(f"시각화를 위해서는 최소 {min_docs_for_clustering}개 이상의 문서가 필요합니다. 현재 문서 수: {total_docs_for_viz}")
+                             st.stop()
+                             
+                        # 클러스터 수 조정 (문서 수보다 클 수 없음)
+                        if find_optimal:
+                             # 자동 찾기 시에도 최대 클러스터 수는 문서 수보다 작아야 함
+                             max_clusters_actual = min(max_clusters, total_docs_for_viz - 1) if total_docs_for_viz > 1 else 2
+                             if max_clusters_actual < 2:
+                                 st.warning(f"클러스터링을 위해서는 최소 2개 이상의 클러스터가 필요하지만, 문서 수가 부족하여 자동 찾기를 수행할 수 없습니다. (문서 수: {total_docs_for_viz})")
+                                 find_optimal = False # 자동 찾기 비활성화
+                                 n_clusters = max(2, total_docs_for_viz // 2) # 기본 클러스터 수 설정
+                                 st.info(f"클러스터 수를 {n_clusters}로 자동 조정합니다.")
+                             else:
+                                 max_clusters = max_clusters_actual # 조정된 최대 클러스터 수 사용
+                                 st.info(f"자동 찾기 최대 클러스터 수를 {max_clusters}로 조정합니다.")
+                                 
+                        # 클러스터 수 조정 (문서 수보다 클 수 없음) - 자동 찾기 사용 안 할 때
+                        if not find_optimal and n_clusters >= total_docs_for_viz:
+                             st.warning(f"클러스터 수({n_clusters})가 문서 수({total_docs_for_viz})보다 많습니다. 클러스터 수를 문서 수보다 작게 조정합니다.")
+                             n_clusters = max(2, total_docs_for_viz // 2) # 문서 수의 절반 또는 최소 2개
+                             st.info(f"클러스터 수를 {n_clusters}로 자동 조정합니다.")
+                             
+                        # 클러스터링을 위한 최소 문서 수 확인
+                        if (find_optimal and total_docs_for_viz < 3) or (not find_optimal and total_docs_for_viz < n_clusters):
+                             st.warning(f"클러스터링을 위해서는 최소 {n_clusters}개 이상의 문서가 필요합니다. 현재 문서 수: {total_docs_for_viz}")
+                             if total_docs_for_viz >= 2:
+                                 st.info(f"문서 수에 맞춰 클러스터 수를 {max(2, total_docs_for_viz // 2)}로 조정합니다.")
+                                 n_clusters = max(2, total_docs_for_viz // 2)
+                             else:
+                                 st.error("클러스터링을 수행할 수 없습니다. 문서 수를 늘려주세요.")
+                                 st.stop()
+
+
                     else:
                         st.error("검색 결과가 없거나 임베딩 데이터를 가져올 수 없습니다.")
                         st.stop()
@@ -482,8 +643,8 @@ def render_visualization_tab(selected_collection):
                     
                     if all_data and all_data["documents"]:
                         # 결과 표시
-                        total_docs = len(all_data["documents"])
-                        st.success(f"총 {total_docs}개의 문서를 로드했습니다.")
+                        total_docs_for_viz = len(all_data["documents"])
+                        st.success(f"총 {total_docs_for_viz}개의 문서를 로드했습니다.")
                         
                         # 문서 비율(%) 기반으로 시각화 데이터 가져오기
                         documents, metadatas, ids, embeddings = visualization_utils.get_embeddings_data(collection, all_data, docs_percentage)
@@ -491,11 +652,51 @@ def render_visualization_tab(selected_collection):
                         # 임베딩이 없는 경우 처리
                         if len(embeddings) == 0:
                             st.error("임베딩 데이터를 가져올 수 없습니다.")
-                            embeddings = visualization_utils.handle_missing_embeddings(collection, documents)
-                        
-                        # 임베딩 배열로 변환
-                        import numpy as np
-                        embeddings_array = np.array(embeddings)
+                            # 임베딩이 없을 때 대체 시각화 로직 (visualization_utils 내부에서 처리)
+                            embeddings_array = visualization_utils.handle_missing_embeddings(collection, documents)
+                            if embeddings_array is None or len(embeddings_array) == 0:
+                                st.error("임베딩 데이터가 없거나 대체 임베딩 생성에 실패하여 시각화를 진행할 수 없습니다.")
+                                st.stop()
+                        else:
+                            # 임베딩 배열로 변환
+                            import numpy as np
+                            embeddings_array = np.array(embeddings)
+                            
+                        # 최소 필요 문서 수 확인 (클러스터링을 위해)
+                        min_docs_for_clustering = 3 # 최소 3개 문서 필요 (t-SNE, KMeans)
+                        if len(documents) < min_docs_for_clustering:
+                             st.warning(f"시각화를 위해서는 최소 {min_docs_for_clustering}개 이상의 문서가 필요합니다. 현재 문서 수: {len(documents)}")
+                             st.stop()
+                             
+                        # 클러스터 수 조정 (문서 수보다 클 수 없음)
+                        if find_optimal:
+                             # 자동 찾기 시에도 최대 클러스터 수는 문서 수보다 작아야 함
+                             max_clusters_actual = min(max_clusters, len(documents) - 1) if len(documents) > 1 else 2
+                             if max_clusters_actual < 2:
+                                 st.warning(f"클러스터링을 위해서는 최소 2개 이상의 클러스터가 필요하지만, 문서 수가 부족하여 자동 찾기를 수행할 수 없습니다. (문서 수: {len(documents)})")
+                                 find_optimal = False # 자동 찾기 비활성화
+                                 n_clusters = max(2, len(documents) // 2) # 기본 클러스터 수 설정
+                                 st.info(f"클러스터 수를 {n_clusters}로 자동 조정합니다.")
+                             else:
+                                 max_clusters = max_clusters_actual # 조정된 최대 클러스터 수 사용
+                                 st.info(f"자동 찾기 최대 클러스터 수를 {max_clusters}로 조정합니다.")
+                                 
+                        # 클러스터 수 조정 (문서 수보다 클 수 없음) - 자동 찾기 사용 안 할 때
+                        if not find_optimal and n_clusters >= len(documents):
+                             st.warning(f"클러스터 수({n_clusters})가 문서 수({len(documents)})보다 많습니다. 클러스터 수를 문서 수보다 작게 조정합니다.")
+                             n_clusters = max(2, len(documents) // 2) # 문서 수의 절반 또는 최소 2개
+                             st.info(f"클러스터 수를 {n_clusters}로 자동 조정합니다.")
+                             
+                        # 클러스터링을 위한 최소 문서 수 확인
+                        if (find_optimal and len(documents) < 3) or (not find_optimal and len(documents) < n_clusters):
+                             st.warning(f"클러스터링을 위해서는 최소 {n_clusters}개 이상의 문서가 필요합니다. 현재 문서 수: {len(documents)}")
+                             if len(documents) >= 2:
+                                 st.info(f"문서 수에 맞춰 클러스터 수를 {max(2, len(documents) // 2)}로 조정합니다.")
+                                 n_clusters = max(2, len(documents) // 2)
+                             else:
+                                 st.error("클러스터링을 수행할 수 없습니다. 문서 수를 늘려주세요.")
+                                 st.stop()
+
                     else:
                         st.info("컬렉션에 데이터가 없습니다.")
                         st.stop()
@@ -504,6 +705,7 @@ def render_visualization_tab(selected_collection):
                 if find_optimal:
                     st.subheader("최적 클러스터 수 분석")
                     with st.spinner("최적 클러스터 수 계산 중..."):
+                        # 임베딩 배열과 최대 클러스터 수를 전달
                         silhouette_df, optimal_clusters = visualization_utils.find_optimal_clusters(embeddings_array, max_clusters)
                         
                         # 엘보우 방법 시각화
@@ -532,7 +734,7 @@ def render_visualization_tab(selected_collection):
                 
                 # 세션 상태에 시각화 데이터와 클러스터 수 저장
                 st.session_state.viz_data = viz_data
-                st.session_state.n_clusters = n_clusters
+                st.session_state.n_clusters = n_clusters # 최종 결정된 클러스터 수 저장
                 st.session_state.viz_completed = True
                 st.rerun()
             except Exception as e:
@@ -591,14 +793,14 @@ def render_visualization_tab(selected_collection):
                         viz_data = st.session_state.viz_data
                         n_clusters = st.session_state.n_clusters
                         lda_topics = st.session_state.lda_topics
-                        st.session_state.lda_running = True
+                        # st.session_state.lda_running = True # 상태 변수 필요 시 사용
                         visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
                         st.success("LDA 토픽 모델링이 완료되었습니다.")
                     except Exception as e:
                         st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
                         st.exception(e)
-                    finally:
-                        st.session_state.lda_running = False
+                    # finally: # 상태 변수 필요 시 사용
+                    #     st.session_state.lda_running = False
         else:
             st.warning("시각화 데이터가 세션에 없습니다. 먼저 '시각화 생성'을 실행하세요.")
 
