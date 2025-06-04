@@ -8,6 +8,7 @@ import torch # GPU 확인을 위해 추가
 import numpy as np
 import hashlib
 from functools import lru_cache
+import streamlit as st # Streamlit 캐싱을 위해 추가
 from typing import List, Dict, Any, Union, Optional, Callable
 from chromadb.utils import embedding_functions
 from sentence_transformers import SentenceTransformer # For OOM fallback and direct use
@@ -180,9 +181,10 @@ def _create_oom_safe_embedding_function(
     return oom_safe_function
 
 
+@st.cache_resource # 임베딩 모델 인스턴스를 캐싱하여 재사용
 def get_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache=True, device_preference="auto"):
-    """
-    임베딩 함수를 생성합니다. 캐싱 기능이 포함되어 있습니다.
+    """ # noqa: E501
+    임베딩 함수를 생성합니다. 캐싱 기능이 포함되어 있습니다. CPU 사용을 기본으로 합니다.
     
     Args:
         embedding_model_request (str): 사용자가 요청한 임베딩 모델 이름
@@ -194,26 +196,28 @@ def get_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache
     """
     global EMBEDDING_MODEL_STATUS, EMBEDDING_CACHE, CACHE_HITS, CACHE_MISSES
     reset_embedding_status()
+
+    # 사용자의 요청에 따라 device_preference가 "auto" 또는 명시적 "cpu"일 경우 CPU를 사용하도록 설정
+    # 명시적으로 "cuda"가 요청된 경우에만 GPU 사용 시도
+    actual_device_preference = "cpu" # 기본적으로 CPU
+    if device_preference == "cuda":
+        actual_device_preference = "cuda"
+
     EMBEDDING_MODEL_STATUS["requested_model"] = embedding_model_request
     EMBEDDING_MODEL_STATUS["device_preference"] = device_preference
-
     model_to_try = embedding_model_request
     if model_to_try == "default" or model_to_try is None:
         model_to_try = get_default_embedding_model_name()
 
     # 장치 결정 로직
     model_kwargs = {}
-    final_device_to_use = "cpu"  # 기본값 CPU
-    if device_preference == "auto":
-        if is_gpu_available():
-            final_device_to_use = "cuda"
-    elif device_preference == "cuda":
+    final_device_to_use = "cpu"  # 최종적으로 사용할 장치, 기본값 CPU
+    if actual_device_preference == "cuda":
         if is_gpu_available():
             final_device_to_use = "cuda"
         else:
             print("경고: GPU 사용이 요청되었으나 사용 가능한 CUDA 장치가 없습니다. CPU를 사용합니다.")
-            # final_device_to_use는 이미 "cpu"로 설정됨
-    # device_preference == "cpu"인 경우 final_device_to_use는 "cpu"
+    # actual_device_preference가 "cpu"인 경우 final_device_to_use는 이미 "cpu"
     
     model_kwargs['device'] = final_device_to_use
     EMBEDDING_MODEL_STATUS["device_used"] = final_device_to_use
@@ -461,7 +465,7 @@ class L2NormalizedEmbeddingFunction:
         # 기본 함수가 name 속성이 없는 경우 (드물지만 안전 장치)
         return "L2NormalizedEmbeddingFunction" # 또는 적절한 기본 이름
 
-def get_normalized_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache=True, device_preference="auto"):
+def get_normalized_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache=True, device_preference="cpu"): # 기본값을 "cpu"로 변경
     """
     L2 정규화가 적용된 임베딩 함수를 생성합니다.
     

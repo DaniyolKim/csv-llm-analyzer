@@ -107,30 +107,96 @@ def handle_missing_embeddings(collection, documents):
         st.stop()
         return []
 
-def prepare_visualization_data(embeddings_array, documents, ids, metadatas, perplexity, n_clusters):
+def prepare_visualization_data(embeddings_input, documents, ids, metadatas, perplexity, n_clusters):
     """시각화를 위한 데이터를 준비하는 함수"""
+    
+    # 1. Convert to NumPy array and ensure it's numeric
+    try:
+        # Ensure embeddings_input is treated as a NumPy array of floats
+        current_embeddings_array = np.array(embeddings_input, dtype=float)
+    except ValueError as e:
+        st.error(f"임베딩 데이터를 숫자형 배열로 변환하는 중 오류 발생: {e}")
+        st.info("일부 문서의 임베딩이 유효하지 않거나 형식이 일관되지 않을 수 있습니다.")
+        st.error("심각한 임베딩 데이터 형식 오류로 시각화를 진행할 수 없습니다. DB의 임베딩 데이터를 확인해주세요.")
+        return pd.DataFrame() # Return empty DataFrame
+
+    # 2. Check array dimension
+    if current_embeddings_array.ndim != 2:
+        st.error(f"임베딩 배열이 2차원이 아닙니다 (현재 차원: {current_embeddings_array.ndim}). 시각화를 진행할 수 없습니다.")
+        st.info("컬렉션의 임베딩 데이터 구조를 확인해주세요. 각 임베딩은 동일한 길이의 숫자 리스트여야 합니다.")
+        return pd.DataFrame()
+    
+    # 3. Check for NaN values and filter
+    nan_rows_mask = np.isnan(current_embeddings_array).any(axis=1)
+    
+    if np.any(nan_rows_mask): # If there are any NaN rows
+        num_removed = np.sum(nan_rows_mask)
+        st.warning(f"임베딩 데이터에 NaN 값이 포함된 {num_removed}개의 문서가 시각화에서 제외됩니다.")
+        
+        embeddings_array_filtered = current_embeddings_array[~nan_rows_mask]
+        documents_filtered = [doc for i, doc in enumerate(documents) if not nan_rows_mask[i]]
+        ids_filtered = [id_val for i, id_val in enumerate(ids) if not nan_rows_mask[i]]
+        metadatas_filtered = [meta for i, meta in enumerate(metadatas) if not nan_rows_mask[i]]
+        
+        if embeddings_array_filtered.shape[0] == 0:
+            st.error("NaN 값을 포함한 문서를 제외한 후 시각화할 데이터가 남아있지 않습니다.")
+            return pd.DataFrame()
+    else:
+        embeddings_array_filtered = current_embeddings_array
+        documents_filtered = documents
+        ids_filtered = ids
+        metadatas_filtered = metadatas
+
+    # 4. Check if enough data points remain for t-SNE and K-Means
+    num_samples = embeddings_array_filtered.shape[0]
+
+    if num_samples == 0:
+        st.error("시각화할 데이터 포인트가 없습니다.")
+        return pd.DataFrame()
+
+    # Adjust perplexity for t-SNE: must be less than n_samples
+    adjusted_perplexity = perplexity
+    if num_samples <= perplexity:
+        adjusted_perplexity = max(1, num_samples - 1) 
+        if num_samples > 1:
+             st.warning(f"데이터 포인트 수({num_samples})가 Perplexity 설정값({perplexity})보다 작거나 같아 Perplexity를 {adjusted_perplexity}로 조정합니다.")
+    
+    if num_samples <= 1: # TSNE requires at least 2 samples
+        st.error(f"t-SNE를 실행하기에 데이터 포인트가 너무 적습니다 ({num_samples}개). 최소 2개 이상의 데이터 포인트가 필요합니다.")
+        return pd.DataFrame()
+
+    # Adjust n_clusters for K-Means: must be <= n_samples and >= 1
+    actual_n_clusters = n_clusters
+    if num_samples < n_clusters:
+        actual_n_clusters = num_samples
+        st.warning(f"요청된 클러스터 수({n_clusters})가 사용 가능한 데이터 포인트 수({num_samples})보다 많아 클러스터 수를 {actual_n_clusters}로 조정합니다.")
+    
+    if actual_n_clusters < 1:
+        st.error(f"클러스터링을 위한 데이터 포인트가 없습니다 ({num_samples}개). 최소 1개의 클러스터가 필요합니다.")
+        return pd.DataFrame()
+
     # t-SNE로 차원 축소
     st.text("t-SNE로 차원 축소 중...")
-    tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
-    embeddings_2d = tsne.fit_transform(embeddings_array)
+    tsne = TSNE(n_components=2, perplexity=adjusted_perplexity, random_state=42, init='pca', learning_rate='auto')
+    embeddings_2d = tsne.fit_transform(embeddings_array_filtered)
     
     # K-means 클러스터링
     st.text("클러스터링 중...")
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-    clusters = kmeans.fit_predict(embeddings_array)
+    kmeans = KMeans(n_clusters=actual_n_clusters, random_state=42, n_init='auto')
+    clusters = kmeans.fit_predict(embeddings_array_filtered)
     
     # 데이터프레임 생성
     viz_data = pd.DataFrame({
         'x': embeddings_2d[:, 0],
         'y': embeddings_2d[:, 1],
         'cluster': clusters,
-        'id': ids,
-        'text': documents,  # 전체 텍스트 표시 (hover용)
-        'full_text': documents  # 원본 텍스트 (WordCloud 및 상세 내용 표시용)
+        'id': ids_filtered,
+        'text': documents_filtered,
+        'full_text': documents_filtered
     })
     
     # 출처 정보 추가
-    viz_data['source'] = [metadata.get("source", "알 수 없음") for metadata in metadatas]
+    viz_data['source'] = [metadata.get("source", "알 수 없음") for metadata in metadatas_filtered]
     
     return viz_data
 
