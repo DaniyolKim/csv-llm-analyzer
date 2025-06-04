@@ -2,6 +2,7 @@
 Ollama 관련 유틸리티 함수 모음
 """
 import platform
+from typing import Dict, Any, Optional, List
 import subprocess
 import traceback
 
@@ -88,7 +89,7 @@ def get_ollama_models():
         traceback.print_exc()
         return []
 
-def query_ollama(prompt, model_name="llama2"):
+def query_ollama(prompt: str, model_name: str = "llama2", ollama_options: Optional[Dict[str, Any]] = None) -> str:
     """
     Ollama 모델에 질의합니다.
     
@@ -96,6 +97,7 @@ def query_ollama(prompt, model_name="llama2"):
         prompt (str): 프롬프트
         model_name (str): Ollama 모델 이름
         
+        ollama_options (Optional[Dict[str, Any]]): Ollama API에 전달할 추가 옵션 (예: {'num_gpu': 1})
     Returns:
         str: 모델 응답
     """
@@ -103,7 +105,7 @@ def query_ollama(prompt, model_name="llama2"):
         import ollama
         
         # Ollama 라이브러리 사용
-        response = ollama.generate(model=model_name, prompt=prompt)
+        response = ollama.generate(model=model_name, prompt=prompt, options=ollama_options)
         
         # 응답 구조 확인
         if isinstance(response, dict) and 'response' in response:
@@ -123,13 +125,14 @@ def query_ollama(prompt, model_name="llama2"):
         traceback.print_exc()
         return f"Ollama 오류: {e}"
 
-def chat_with_ollama(messages, model_name="llama2"):
+def chat_with_ollama(messages: List[Dict[str, str]], model_name: str = "llama2", ollama_options: Optional[Dict[str, Any]] = None) -> str:
     """
     Ollama 모델과 역할 기반 대화를 수행합니다.
     
     Args:
         messages (list): 대화 메시지 목록. 각 메시지는 {'role': 'system|user|assistant', 'content': '내용'} 형식
         model_name (str): Ollama 모델 이름
+        ollama_options (Optional[Dict[str, Any]]): Ollama API에 전달할 추가 옵션 (예: {'num_gpu': 1})
         
     Returns:
         str: 모델 응답
@@ -138,7 +141,7 @@ def chat_with_ollama(messages, model_name="llama2"):
         import ollama
         
         # Ollama 라이브러리의 chat 함수 사용
-        response = ollama.chat(model=model_name, messages=messages)
+        response = ollama.chat(model=model_name, messages=messages, options=ollama_options)
         
         # 응답 구조 확인
         if isinstance(response, dict) and 'message' in response:

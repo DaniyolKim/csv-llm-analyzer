@@ -11,7 +11,8 @@ from utils import (
     get_available_collections,
     load_chroma_collection,
     delete_collection,
-    get_embedding_status
+    get_embedding_status,
+    get_gpu_info # GPU 정보 함수 임포트
 )
 from embedding_utils import get_available_embedding_models
 
@@ -45,6 +46,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'current_question' not in st.session_state:
     st.session_state.current_question = ""
+if 'ollama_num_gpu' not in st.session_state:
+    st.session_state.ollama_num_gpu = 0 # Ollama에 할당할 GPU 수
 
 # 제목
 st.title("Custom RAG")
@@ -289,6 +292,23 @@ if st.session_state.rag_enabled:
                 step=1,
                 help="참조할 문서 수를 선택하세요. 일반적으로 3-5개가 적당합니다."
             )
+
+            # Ollama GPU 할당 설정
+            gpu_info_data = get_gpu_info()
+            ollama_gpu_to_assign = 0
+            if gpu_info_data["available"]:
+                st.session_state.ollama_num_gpu = st.number_input(
+                    "Ollama에 할당할 GPU 수", 
+                    min_value=0, 
+                    max_value=gpu_info_data["count"], 
+                    value=st.session_state.ollama_num_gpu if st.session_state.ollama_num_gpu <= gpu_info_data["count"] else (1 if gpu_info_data["count"] > 0 else 0),
+                    step=1,
+                    help=f"Ollama 모델 추론에 사용할 GPU 개수입니다. (시스템에 사용 가능: {gpu_info_data['count']}개). 0으로 설정하면 CPU를 사용합니다."
+                )
+                ollama_gpu_to_assign = st.session_state.ollama_num_gpu
+            else:
+                st.info("Ollama 추론에 사용 가능한 GPU가 없습니다. CPU를 사용합니다.")
+                st.session_state.ollama_num_gpu = 0
         
         # 채팅 인터페이스 컨테이너
         chat_container = st.container()
@@ -460,13 +480,18 @@ if st.session_state.rag_enabled:
                     # n_results 처리
                     actual_n_results = n_results
                     
+                    # Ollama 옵션 설정
+                    current_ollama_options = None
+                    if st.session_state.ollama_num_gpu > 0:
+                        current_ollama_options = {'num_gpu': st.session_state.ollama_num_gpu}
+
                     # RAG 쿼리 실행
                     chat_history = [msg for msg in st.session_state.chat_history if msg["role"] in ["user", "assistant"]]
                     result = rag_chat_with_ollama(
                         collection=st.session_state.chroma_collection,
                         query=current_question,
                         model_name=selected_model,
-                        n_results=actual_n_results,
+                        n_results=actual_n_results, # n_results는 rag_chat_with_ollama 내부에서 검색 시 사용
                         system_prompt=prompt if prompt else None,
                         chat_history=chat_history
                     )

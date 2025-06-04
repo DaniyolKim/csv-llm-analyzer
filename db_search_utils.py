@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from text_utils import KOREAN_STOPWORDS, clean_text
 
 # 데이터 로딩 및 표시 함수
@@ -316,7 +315,7 @@ def search_collection_by_similarity(collection, query, similarity_threshold=0.5,
         else:
             return pd.DataFrame(), []
 
-def search_collection_by_similarity_full(collection, query, similarity_threshold=0.5, include_embeddings=False):
+def search_collection_by_similarity_full(collection, query, similarity_threshold=0.5, include_embeddings=False, embed_fn=None):
     """
     유사도 임계값 기반으로 컬렉션에서 검색하는 함수 (전체 컬렉션 데이터를 사용)
     이 방법은 ChromaDB의 1000개 제한을 우회하지만, 큰 컬렉션의 경우 메모리 사용량이 많을 수 있습니다.
@@ -324,7 +323,6 @@ def search_collection_by_similarity_full(collection, query, similarity_threshold
     try:
         import streamlit as st
         import pandas as pd
-        import numpy as np
         from embedding_utils import get_embedding_function
         
         with st.spinner("전체 문서 데이터를 로드하는 중..."):
@@ -340,16 +338,15 @@ def search_collection_by_similarity_full(collection, query, similarity_threshold
             st.info(f"총 {total_docs}개 문서가 로드되었습니다. 유사도 계산을 시작합니다.")
         
         # 쿼리 임베딩 생성
+        if embed_fn is None:
+             # embed_fn이 전달되지 않은 경우 (예: 이전 버전 호환성 또는 직접 호출)
+             # 컬렉션 메타데이터에서 모델 정보를 가져와 로드 시도
+             embedding_model = collection.metadata.get("embedding_model", "all-MiniLM-L6-v2")
+             embed_fn = get_embedding_function(embedding_model) # 이 함수는 st.cache_resource 적용됨
+             if embed_fn is None:
+                 raise Exception("임베딩 모델 로드에 실패했습니다.")
+
         with st.spinner("검색 쿼리 임베딩 생성 중..."):
-            # 컬렉션에 사용된 임베딩 모델 확인
-            embedding_model = "all-MiniLM-L6-v2"  # 기본값
-            try:
-                if collection.metadata and "embedding_model" in collection.metadata:
-                    embedding_model = collection.metadata["embedding_model"]
-            except:
-                pass
-                
-            embed_fn = get_embedding_function(embedding_model)
             query_embedding = embed_fn([query])[0]
         
         # 유사도 계산 및 필터링

@@ -13,7 +13,9 @@ from embedding_utils import (
     get_embedding_status,
     set_ssl_verification,
     get_embedding_function,
-    get_available_embedding_models
+    get_available_embedding_models,
+    is_gpu_available, # 추가
+    get_gpu_info      # 추가
 )
 
 # ChromaDB 관련 함수
