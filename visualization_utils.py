@@ -213,7 +213,7 @@ def display_cluster_documents(viz_data, n_clusters):
                 st.markdown(f"**내용:** {row['full_text']}")
                 st.markdown("---")
 
-def generate_wordcloud_for_cluster(texts, stopwords):
+def generate_wordcloud_for_cluster(texts, stopwords, max_words_wc=50):
     """클러스터의 텍스트에서 워드클라우드 생성"""
     from text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
     
@@ -273,7 +273,8 @@ def generate_wordcloud_for_cluster(texts, stopwords):
             width=800,
             height=400,
             background_color='white',
-            collocations=False # 연어(collocations) 방지
+            collocations=False, # 연어(collocations) 방지
+            max_words=max_words_wc # 표시할 최대 단어 수 설정
         ).generate(' '.join(nouns))
         
         ax.imshow(wordcloud, interpolation='bilinear')
@@ -284,7 +285,7 @@ def generate_wordcloud_for_cluster(texts, stopwords):
         plt.close(fig) # 오류 발생 시 생성된 figure 닫기
         return None
 
-def display_cluster_wordclouds(viz_data, n_clusters, stopwords):
+def display_cluster_wordclouds(viz_data, n_clusters, stopwords, max_words_wc=50):
     """클러스터별 워드클라우드 표시"""
     st.subheader("클러스터별 주요 단어 (WordCloud)")
 
@@ -310,7 +311,7 @@ def display_cluster_wordclouds(viz_data, n_clusters, stopwords):
             if not cluster_texts:
                 st.write(f"클러스터 {cluster_id}: 분석할 텍스트가 없습니다.")
                 continue
-            wordcloud_fig = generate_wordcloud_for_cluster(cluster_texts, stopwords)
+            wordcloud_fig = generate_wordcloud_for_cluster(cluster_texts, stopwords, max_words_wc)
             if wordcloud_fig:
                 st.pyplot(wordcloud_fig)
                 plt.close(wordcloud_fig) # 사용 후 figure 닫기

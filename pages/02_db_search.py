@@ -39,6 +39,8 @@ if 'viz_data' not in st.session_state:
     st.session_state.viz_data = None
 if 'n_clusters' not in st.session_state:
     st.session_state.n_clusters = None
+if 'max_words_wc_slider' not in st.session_state: # WordCloud 최대 단어 수 세션 상태
+    st.session_state.max_words_wc_slider = 50
 
 st.title("DB 검색")
 
@@ -393,6 +395,21 @@ def render_visualization_tab(selected_collection):
             너무 큰 값: 클러스터 간 경계가 모호해짐
             """
         )
+
+        # WordCloud 최대 단어 수 설정
+        current_max_words_val = st.session_state.get('max_words_wc_slider', 50)
+        max_words_wc_slider = st.slider(
+            "WordCloud 최대 단어 수",
+            min_value=20,
+            max_value=200,
+            value=current_max_words_val,
+            step=10,
+            key="max_words_wc_slider_key",
+            help="WordCloud에 표시할 최대 단어 수를 설정합니다. 일반적으로 50-100개가 적절합니다."
+        )
+        # 세션 상태 업데이트 (슬라이더 값이 변경된 경우)
+        if current_max_words_val != max_words_wc_slider:
+            st.session_state.max_words_wc_slider = max_words_wc_slider
         
         # LDA 토픽 수 설정은 여기서 제거하고 아래로 이동
     
@@ -503,12 +520,13 @@ def render_visualization_tab(selected_collection):
         viz_data = st.session_state.get('viz_data')
         n_clusters = st.session_state.get('n_clusters')
         if viz_data is not None and n_clusters is not None:
+            max_words_to_use = st.session_state.get('max_words_wc_slider', 100)
             # 기본 시각화 표시
-            render_visualizations(viz_data, n_clusters)
+            render_visualizations(viz_data, n_clusters, max_words_to_use)
             # LDA 토픽 모델링 섹션 - 시각화 이후에 배치하여 UI 흐름 일관성 유지
             st.subheader("클러스터별 LDA 토픽 모델링 설정")
             with st.container():
-                lda_cols = st.columns([3, 1])
+                lda_cols = st.columns([3,1])
                 with lda_cols[0]:
                     lda_topics = st.slider(
                         "LDA 토픽 수",
@@ -547,16 +565,15 @@ def render_visualization_tab(selected_collection):
             st.warning("시각화 데이터가 세션에 없습니다. 먼저 '시각화 생성'을 실행하세요.")
 
 # 시각화 렌더링 함수를 분리하여 재사용 가능하게 함
-def render_visualizations(viz_data, n_clusters):
+def render_visualizations(viz_data, n_clusters, max_words_for_wordcloud):
     """시각화 데이터를 사용하여 클러스터 시각화, 문서, WordCloud를 표시"""
     # 클러스터 시각화
     visualization_utils.create_cluster_visualization(viz_data, n_clusters)
     
     # 클러스터별 주요 문서 표시
     visualization_utils.display_cluster_documents(viz_data, n_clusters)
-    
     # 클러스터별 WordCloud 표시
-    visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS)
+    visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS, max_words_wc=max_words_for_wordcloud)
 
 # 메인 앱 실행
 def main():
