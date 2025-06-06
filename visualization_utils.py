@@ -232,8 +232,6 @@ def prepare_visualization_data(embeddings_input, documents, ids, metadatas, perp
 
 def create_cluster_visualization(viz_data, n_clusters):
     """클러스터 시각화 생성"""
-    st.subheader("문서 클러스터 시각화")
-    
     # 클러스터별 색상 설정
     colors = px.colors.qualitative.Plotly
     
@@ -299,7 +297,6 @@ def create_cluster_visualization(viz_data, n_clusters):
 
 def display_cluster_documents(viz_data, n_clusters):
     """클러스터별 주요 문서를 표시"""
-    st.subheader("클러스터별 주요 문서")
     for cluster_id in range(n_clusters):
         cluster_docs = viz_data[viz_data['cluster'] == cluster_id]
         with st.expander(f"클러스터 {cluster_id} 주요 문서 ({len(cluster_docs)}개 문서)"):
@@ -383,8 +380,6 @@ def generate_wordcloud_for_cluster(texts, stopwords, max_words_wc=100):
 
 def display_cluster_wordclouds(viz_data, n_clusters, stopwords, max_words_wc=100):
     """클러스터별 워드클라우드 표시"""
-    st.subheader("클러스터별 주요 단어 (WordCloud)")
-
     # 폰트 경로 미리 확인 (경고 메시지용)
     font_path_exists = False
     preferred_fonts = ['NanumGothic', 'Malgun Gothic', 'AppleGothic', 'Noto Sans KR']

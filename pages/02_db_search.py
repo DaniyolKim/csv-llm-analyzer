@@ -547,6 +547,21 @@ def render_visualization_tab(selected_collection):
         # 세션 상태 업데이트 (슬라이더 값이 변경된 경우)
         if current_max_words_val != max_words_wc_slider:
             st.session_state.max_words_wc_slider = max_words_wc_slider
+            
+        # LDA 토픽 수 설정
+        current_lda_topics = st.session_state.get('lda_topics', 6)
+        lda_topics_slider = st.slider(
+            "LDA 토픽 수",
+            min_value=2,
+            max_value=10,
+            value=current_lda_topics,
+            step=1,
+            key="lda_topics_setting_slider",
+            help="LDA 토픽 모델링에서 사용할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다."
+        )
+        # 세션 상태 업데이트 (슬라이더 값이 변경된 경우)
+        if current_lda_topics != lda_topics_slider:
+            st.session_state.lda_topics = lda_topics_slider
         
         st.session_state.perplexity = perplexity # 세션 상태에 저장
 
@@ -763,38 +778,62 @@ def render_visualization_tab(selected_collection):
             max_words_to_use = st.session_state.get('max_words_wc_slider', 100)
             # 기본 시각화 표시
             render_visualizations(viz_data, n_clusters, max_words_to_use)
-            # LDA 토픽 모델링 섹션 - 시각화 이후에 배치하여 UI 흐름 일관성 유지
-            st.subheader("클러스터별 LDA 토픽 모델링 설정")
-            with st.container():
-                lda_cols = st.columns([3,1])
-                with lda_cols[0]:
-                    lda_topics = st.slider(
-                        "LDA 토픽 수",
-                        min_value=2,
-                        max_value=10,
-                        value=st.session_state.get('lda_topics', 6),
-                        step=1,
-                        help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다.",
-                        key="lda_topics_slider"
-                    )
-                    if 'lda_topics' not in st.session_state or st.session_state.lda_topics != lda_topics:
-                        st.session_state.lda_topics = lda_topics
-                with lda_cols[1]:
-                    st.write("")
-                    run_lda_again = st.button(
-                        "LDA 토픽 모델링", 
-                        key="run_lda_again_btn", 
-                        type="primary"
-                    )
-            st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
-            if run_lda_again:
-                with st.spinner("LDA 토픽 모델링 중..."):
-                    try:
-                        viz_data = st.session_state.viz_data
-                        n_clusters = st.session_state.n_clusters
-                        lda_topics = st.session_state.lda_topics
-                        
-                        # 각 클러스터별로 LDA 토픽 모델링 실행
+            # LDA 토픽 모델링은 이제 render_visualizations 함수 내의 탭으로 이동했으므로 여기서는 제거
+        else:
+            st.warning("시각화 데이터가 세션에 없습니다. 먼저 '시각화 생성'을 실행하세요.")
+
+# 시각화 렌더링 함수를 분리하여 재사용 가능하게 함
+def render_visualizations(viz_data, n_clusters, max_words_for_wordcloud):
+    """시각화 데이터를 사용하여 클러스터 시각화, 문서, WordCloud를 표시"""
+    # 시각화 기능을 탭으로 분리
+    viz_tabs = st.tabs(["클러스터 시각화", "주요 문서", "워드클라우드", "LDA 토픽 모델링"])
+    
+    # 탭 1: 클러스터 시각화
+    with viz_tabs[0]:
+        st.subheader("문서 클러스터 시각화")
+        visualization_utils.create_cluster_visualization(viz_data, n_clusters)
+    
+    # 탭 2: 클러스터별 주요 문서
+    with viz_tabs[1]:
+        st.subheader("클러스터별 주요 문서")
+        visualization_utils.display_cluster_documents(viz_data, n_clusters)
+    
+    # 탭 3: 클러스터별 워드클라우드
+    with viz_tabs[2]:
+        st.subheader("클러스터별 주요 단어 (WordCloud)")
+        visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS, max_words_wc=max_words_for_wordcloud)
+    
+    # 탭 4: LDA 토픽 모델링
+    with viz_tabs[3]:
+        st.subheader("클러스터별 LDA 토픽 모델링")
+        
+        # 클러스터 선택 드롭다운
+        cluster_options = ["모든 클러스터"] + [f"클러스터 {i}" for i in range(n_clusters)]
+        selected_cluster = st.selectbox(
+            "분석할 클러스터 선택",
+            options=cluster_options,
+            index=0,
+            key="lda_cluster_select"
+        )
+        
+        # LDA 토픽 수 설정 (시각화 설정에서 이미 설정한 값 사용)
+        lda_topics = st.session_state.get('lda_topics', 6)
+        
+        st.write("lambda=1일 때는 빈도 기반, lambda=0일 때는 토픽 내 특이성 기반으로 단어를 정렬합니다. 0.6 ~ 0.8 사이의 값을 추천합니다.")
+        
+        # LDA 토픽 모델링 실행 버튼
+        run_lda = st.button(
+            "LDA 토픽 모델링 실행", 
+            key="run_lda_btn", 
+            type="primary"
+        )
+        
+        if run_lda:
+            with st.spinner("LDA 토픽 모델링 중..."):
+                try:
+                    # 선택한 클러스터에 따라 처리
+                    if selected_cluster == "모든 클러스터":
+                        # 모든 클러스터 처리
                         for cluster_id in range(n_clusters):
                             cluster_texts = viz_data[viz_data['cluster'] == cluster_id]['full_text'].tolist()
                             if len(cluster_texts) >= 5:  # 최소 5개 문서 필요
@@ -802,24 +841,20 @@ def render_visualization_tab(selected_collection):
                                 visualization_utils.process_cluster_lda(cluster_texts, cluster_id, KOREAN_STOPWORDS, lda_topics)
                             else:
                                 st.write(f"클러스터 {cluster_id}: 문서가 부족하여 LDA 분석을 수행할 수 없습니다. (최소 5개 필요)")
-                        
-                        st.success("LDA 토픽 모델링이 완료되었습니다.")
-                    except Exception as e:
-                        st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
-                        st.exception(e)
-        else:
-            st.warning("시각화 데이터가 세션에 없습니다. 먼저 '시각화 생성'을 실행하세요.")
-
-# 시각화 렌더링 함수를 분리하여 재사용 가능하게 함
-def render_visualizations(viz_data, n_clusters, max_words_for_wordcloud):
-    """시각화 데이터를 사용하여 클러스터 시각화, 문서, WordCloud를 표시"""
-    # 클러스터 시각화
-    visualization_utils.create_cluster_visualization(viz_data, n_clusters)
-    
-    # 클러스터별 주요 문서 표시
-    visualization_utils.display_cluster_documents(viz_data, n_clusters)
-    # 클러스터별 WordCloud 표시
-    visualization_utils.display_cluster_wordclouds(viz_data, n_clusters, KOREAN_STOPWORDS, max_words_wc=max_words_for_wordcloud)
+                    else:
+                        # 특정 클러스터만 처리
+                        cluster_id = int(selected_cluster.split(" ")[1])  # "클러스터 0" -> 0
+                        cluster_texts = viz_data[viz_data['cluster'] == cluster_id]['full_text'].tolist()
+                        if len(cluster_texts) >= 5:  # 최소 5개 문서 필요
+                            st.write(f"클러스터 {cluster_id} LDA 토픽 분석 ({len(cluster_texts)}개 문서)")
+                            visualization_utils.process_cluster_lda(cluster_texts, cluster_id, KOREAN_STOPWORDS, lda_topics)
+                        else:
+                            st.write(f"클러스터 {cluster_id}: 문서가 부족하여 LDA 분석을 수행할 수 없습니다. (최소 5개 필요)")
+                    
+                    st.success("LDA 토픽 모델링이 완료되었습니다.")
+                except Exception as e:
+                    st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
+                    st.exception(e)
 
 # 메인 앱 실행
 def main():
