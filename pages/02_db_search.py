@@ -71,6 +71,38 @@ def setup_sidebar():
         if not os.path.exists(db_path):
             st.warning(f"입력한 경로({db_path})가 존재하지 않습니다. 기본 경로를 사용합니다.")
             db_path = default_db_path
+            
+        # 하드웨어 가속 설정 (임베딩)
+        st.header("하드웨어 설정")
+        
+        # 세션 상태에 embedding_device_preference가 없으면 초기화
+        if 'embedding_device_preference' not in st.session_state:
+            st.session_state.embedding_device_preference = "auto"
+            
+        # GPU 정보 가져오기
+        from utils import get_gpu_info
+        gpu_info_data = get_gpu_info()
+        
+        if gpu_info_data["available"]:
+            st.success(f"✅ GPU 사용 가능: {gpu_info_data['count']}개의 GPU 감지됨.")
+            for i, gpu_device in enumerate(gpu_info_data["devices"]):
+                st.markdown(f"  - GPU {i}: {gpu_device['name']} (메모리: {gpu_device['memory_total']:.2f} GB)")
+            
+            device_options_map = {
+                "자동 (GPU 우선 사용)": "auto",
+                "GPU 강제 사용": "cuda",
+                "CPU 전용 사용": "cpu"
+            }
+            selected_device_label = st.radio(
+                "임베딩 연산 장치 선택",
+                options=list(device_options_map.keys()),
+                index=list(device_options_map.values()).index(st.session_state.embedding_device_preference),
+                help="임베딩 계산에 사용할 장치를 선택합니다. '자동'은 GPU가 있으면 GPU를, 없으면 CPU를 사용합니다."
+            )
+            st.session_state.embedding_device_preference = device_options_map[selected_device_label]
+        else:
+            st.info("ℹ️ 사용 가능한 GPU가 감지되지 않았습니다. 임베딩 연산은 CPU를 사용합니다.")
+            st.session_state.embedding_device_preference = "cpu"
         
         # 사용 가능한 컬렉션 목록 가져오기
         collections = get_available_collections(persist_directory=db_path)
@@ -144,11 +176,9 @@ def setup_sidebar():
                         embedding_model_name = collection.metadata.get("embedding_model", "all-MiniLM-L6-v2") # 기본값
                         
                         # 임베딩 모델 로드 (st.cache_resource 덕분에 한 번만 로드됨)
-                        # load_chroma_collection에서 사용된 device_preference를 알 수 없으므로 'auto'를 사용합니다.
-                        # 만약 load_chroma_collection에서 특정 device_preference를 사용했다면,
-                        # 해당 정보를 메타데이터에 저장하거나 load_chroma_collection에서 반환하도록 수정해야 합니다.
-                        # 현재는 'auto'로 가정하고 로드합니다.
-                        embedding_model_func = get_embedding_function(embedding_model_name, device_preference="auto")
+                        # 세션 상태에서 사용자가 선택한 device_preference 사용
+                        device_preference = st.session_state.get('embedding_device_preference', 'auto')
+                        embedding_model_func = get_embedding_function(embedding_model_name, device_preference=device_preference)
                         
                         if embedding_model_func is None:
                              st.error("임베딩 모델 로드에 실패했습니다. 애플리케이션을 다시 시작하거나 다른 모델을 시도하세요.")
@@ -166,7 +196,8 @@ def setup_sidebar():
                         st.success(f"컬렉션 '{selected_collection}'을 성공적으로 로드했습니다.")
                         
                         # 임베딩 모델 로드 상태 표시
-                        embedding_status = get_embedding_function(embedding_model_name, device_preference="auto", use_cache=True) # 상태 확인용으로 다시 호출 (캐시 사용)
+                        device_preference = st.session_state.get('embedding_device_preference', 'auto')
+                        embedding_status = get_embedding_function(embedding_model_name, device_preference=device_preference, use_cache=True) # 상태 확인용으로 다시 호출 (캐시 사용)
                         status_info = get_embedding_status()
                         if status_info["fallback_used"]:
                              st.warning(f"""

@@ -416,12 +416,17 @@ def store_data_in_chroma(df, selected_columns, collection_name="csv_test", persi
                     existing_ids.add(doc_id)
                     batch_documents.append(chunk)
                     
-                    # 메타데이터에 키워드 정보 추가
-                    batch_metadatas.append({
+                    # 메타데이터에 키워드 정보 추가 (None 값 방지)
+                    metadata = {
                         "source": f"row_{idx}",
                         "chunk": i,
-                        "keywords": keywords_str
-                    })
+                        "keywords": keywords_str if keywords_str else ""  # None 대신 빈 문자열 사용
+                    }
+                    # None 값이 있는지 확인하고 제거
+                    for key in list(metadata.keys()):
+                        if metadata[key] is None:
+                            metadata[key] = ""  # None 값을 빈 문자열로 대체
+                    batch_metadatas.append(metadata)
                     batch_ids.append(doc_id)
                     
                     # 배치 크기에 도달하면 저장
