@@ -339,15 +339,24 @@ def search_collection_by_similarity_full(collection, query, similarity_threshold
             st.info(f"총 {total_docs}개 문서가 로드되었습니다. 유사도 계산을 시작합니다.")
         
         # 쿼리 임베딩 생성
-        if embed_fn is None:
-             # embed_fn이 전달되지 않은 경우 (예: 이전 버전 호환성 또는 직접 호출)
-             # 컬렉션 메타데이터에서 모델 정보를 가져와 로드 시도
-             embedding_model = collection.metadata.get("embedding_model", "all-MiniLM-L6-v2")
-             embed_fn = get_embedding_function(embedding_model) # 이 함수는 st.cache_resource 적용됨
-             if embed_fn is None:
-                 raise Exception("임베딩 모델 로드에 실패했습니다.")
-
         with st.spinner("검색 쿼리 임베딩 생성 중..."):
+            if embed_fn is None:
+                # embed_fn이 전달되지 않은 경우 (예: 이전 버전 호환성 또는 직접 호출)
+                # 컬렉션 메타데이터에서 모델 정보를 가져와 로드 시도
+                embedding_model = collection.metadata.get("embedding_model", "all-MiniLM-L6-v2")
+                embed_fn = get_embedding_function(embedding_model) # 이 함수는 st.cache_resource 적용됨
+                if embed_fn is None:
+                    raise Exception("임베딩 모델 로드에 실패했습니다.")
+            
+            # embed_fn이 문자열인지 확인하고 처리
+            if isinstance(embed_fn, str):
+                # embed_fn이 문자열인 경우 (모델 이름이 전달된 경우)
+                embedding_model = embed_fn
+                embed_fn = get_embedding_function(embedding_model)
+                if embed_fn is None:
+                    raise Exception(f"임베딩 모델 '{embedding_model}' 로드에 실패했습니다.")
+            
+            # 임베딩 함수 호출
             query_embedding = embed_fn([query])[0]
         
         # 유사도 계산 및 필터링

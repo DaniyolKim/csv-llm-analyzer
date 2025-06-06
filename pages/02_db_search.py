@@ -772,7 +772,7 @@ def render_visualization_tab(selected_collection):
                         "LDA 토픽 수",
                         min_value=2,
                         max_value=10,
-                        value=st.session_state.get('lda_topics', 3),
+                        value=st.session_state.get('lda_topics', 6),
                         step=1,
                         help="각 클러스터에서 LDA로 추출할 토픽의 수를 설정합니다. 작은 클러스터의 경우 자동으로 조정됩니다.",
                         key="lda_topics_slider"
