@@ -782,7 +782,7 @@ def render_visualization_tab(selected_collection):
                 with lda_cols[1]:
                     st.write("")
                     run_lda_again = st.button(
-                        "LDA 토픽 모델링 다시 실행", 
+                        "LDA 토픽 모델링", 
                         key="run_lda_again_btn", 
                         type="primary"
                     )
@@ -793,14 +793,20 @@ def render_visualization_tab(selected_collection):
                         viz_data = st.session_state.viz_data
                         n_clusters = st.session_state.n_clusters
                         lda_topics = st.session_state.lda_topics
-                        # st.session_state.lda_running = True # 상태 변수 필요 시 사용
-                        visualization_utils.display_cluster_lda(viz_data, n_clusters, KOREAN_STOPWORDS, lda_topics)
+                        
+                        # 각 클러스터별로 LDA 토픽 모델링 실행
+                        for cluster_id in range(n_clusters):
+                            cluster_texts = viz_data[viz_data['cluster'] == cluster_id]['full_text'].tolist()
+                            if len(cluster_texts) >= 5:  # 최소 5개 문서 필요
+                                st.write(f"클러스터 {cluster_id} LDA 토픽 분석 ({len(cluster_texts)}개 문서)")
+                                visualization_utils.process_cluster_lda(cluster_texts, cluster_id, KOREAN_STOPWORDS, lda_topics)
+                            else:
+                                st.write(f"클러스터 {cluster_id}: 문서가 부족하여 LDA 분석을 수행할 수 없습니다. (최소 5개 필요)")
+                        
                         st.success("LDA 토픽 모델링이 완료되었습니다.")
                     except Exception as e:
                         st.error(f"LDA 토픽 모델링 중 오류가 발생했습니다: {str(e)}")
                         st.exception(e)
-                    # finally: # 상태 변수 필요 시 사용
-                    #     st.session_state.lda_running = False
         else:
             st.warning("시각화 데이터가 세션에 없습니다. 먼저 '시각화 생성'을 실행하세요.")
 

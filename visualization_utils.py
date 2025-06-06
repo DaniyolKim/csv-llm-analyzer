@@ -182,8 +182,38 @@ def prepare_visualization_data(embeddings_input, documents, ids, metadatas, perp
     
     # K-means 클러스터링
     st.text("클러스터링 중...")
-    kmeans = KMeans(n_clusters=actual_n_clusters, random_state=42, n_init='auto')
-    clusters = kmeans.fit_predict(embeddings_array_filtered)
+    
+    # NaN 값 확인 및 처리
+    if np.isnan(embeddings_array_filtered).any():
+        st.warning("임베딩 데이터에 NaN 값이 포함되어 있어 처리합니다.")
+        # NaN이 있는 행 제거
+        nan_mask = ~np.isnan(embeddings_array_filtered).any(axis=1)
+        embeddings_array_filtered_clean = embeddings_array_filtered[nan_mask]
+        ids_filtered_clean = [id for i, id in enumerate(ids_filtered) if nan_mask[i]]
+        documents_filtered_clean = [doc for i, doc in enumerate(documents_filtered) if nan_mask[i]]
+        metadatas_filtered_clean = [meta for i, meta in enumerate(metadatas_filtered) if nan_mask[i]]
+        
+        # 데이터가 충분한지 확인
+        if len(embeddings_array_filtered_clean) < 1:
+            st.error("NaN 값 제거 후 남은 데이터가 없습니다.")
+            return pd.DataFrame()
+            
+        # 클러스터 수 재조정
+        if len(embeddings_array_filtered_clean) < actual_n_clusters:
+            actual_n_clusters = max(1, len(embeddings_array_filtered_clean))
+            st.warning(f"NaN 값 제거 후 데이터 포인트 수({len(embeddings_array_filtered_clean)})가 감소하여 클러스터 수를 {actual_n_clusters}로 재조정합니다.")
+        
+        kmeans = KMeans(n_clusters=actual_n_clusters, random_state=42, n_init='auto')
+        clusters = kmeans.fit_predict(embeddings_array_filtered_clean)
+        
+        # 필터링된 데이터로 변수 업데이트
+        embeddings_array_filtered = embeddings_array_filtered_clean
+        ids_filtered = ids_filtered_clean
+        documents_filtered = documents_filtered_clean
+        metadatas_filtered = metadatas_filtered_clean
+    else:
+        kmeans = KMeans(n_clusters=actual_n_clusters, random_state=42, n_init='auto')
+        clusters = kmeans.fit_predict(embeddings_array_filtered)
     
     # 데이터프레임 생성
     viz_data = pd.DataFrame({
