@@ -2,9 +2,9 @@
 RAG(Retrieval-Augmented Generation) 시스템 관련 유틸리티 함수 모음
 """
 from typing import Dict, Any, Optional, List
-from text_utils import clean_text
-from ollama_utils import query_ollama, chat_with_ollama
-from chroma_utils import hybrid_query_chroma
+from .text_utils import clean_text
+from .ollama_utils import query_ollama, chat_with_ollama
+from .chroma_utils import hybrid_query_chroma
 def rag_query_with_ollama(collection, query: str, model_name: str = "llama2", n_results: int = 5, 
                           similarity_threshold: Optional[float] = None, ollama_options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """

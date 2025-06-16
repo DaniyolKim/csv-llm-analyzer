@@ -26,7 +26,6 @@ EMBEDDING_MODEL_STATUS = {
     "error_message": None,    # 오류 메시지 (있는 경우)
     "device_preference": None, # 사용자가 요청한 장치
     "device_used": None       # 실제 사용된 장치
-    # "last_error_type": None # OOM 발생 등 특정 오류 타입 기록용 (선택적)
 }
 
 # 임베딩 캐시 사전 설정 (메모리 효율성 향상)
@@ -75,27 +74,6 @@ def set_ssl_verification(verify=True):
         # requests 라이브러리의 SSL 검증 경고 무시
         warnings.filterwarnings('ignore', message='Unverified HTTPS request')
         requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
-
-def clear_embedding_cache():
-    """임베딩 캐시를 초기화합니다."""
-    global EMBEDDING_CACHE, CACHE_HITS, CACHE_MISSES
-    EMBEDDING_CACHE = {}
-    CACHE_HITS = 0
-    CACHE_MISSES = 0
-    print(f"임베딩 캐시가 초기화되었습니다.")
-
-def get_cache_stats():
-    """임베딩 캐시 통계를 반환합니다."""
-    global CACHE_HITS, CACHE_MISSES
-    total = CACHE_HITS + CACHE_MISSES
-    hit_ratio = 0 if total == 0 else (CACHE_HITS / total) * 100
-    return {
-        "hits": CACHE_HITS,
-        "misses": CACHE_MISSES, 
-        "total_lookups": total,
-        "hit_ratio": hit_ratio,
-        "cache_size": len(EMBEDDING_CACHE)
-    }
 
 # GPU 관련 함수 추가
 def is_gpu_available():
@@ -354,135 +332,6 @@ def get_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache
     else:
         return oom_safe_base_ef
 
-class L2NormalizedEmbeddingFunction:
-    """
-    L2 정규화를 적용한 임베딩 함수 래퍼 클래스
-    
-    기본 임베딩 함수에서 생성된 벡터에 L2 정규화를 적용하여 유사도 계산의 일관성을 높입니다.
-    """
-    
-    def __init__(self, base_embedding_function, use_cache=True):
-        """
-        L2 정규화 임베딩 함수 초기화
-        
-        Args:
-            base_embedding_function: 기본 임베딩 함수
-            use_cache: 캐싱 사용 여부
-        """
-        self.base_embedding_function = base_embedding_function
-        self.use_cache = use_cache
-        self.cache = {} if use_cache else None
-        
-    def __call__(self, input):
-        """
-        텍스트를 임베딩 벡터로 변환하고 L2 정규화를 적용합니다.
-        
-        Args:
-            input: 임베딩할 텍스트 목록
-            
-        Returns:
-            list: L2 정규화된 임베딩 벡터 목록
-        """
-        # 캐싱 기능 사용 시 캐시 확인
-        if self.use_cache:
-            global CACHE_HITS, CACHE_MISSES
-            cached_vectors = {}
-            texts_to_embed = []
-            text_positions = {}
-            
-            # 캐시 확인
-            for i, text in enumerate(input):
-                text_hash = _hash_text(text)
-                
-                if text_hash in EMBEDDING_CACHE:
-                    # 캐시 히트
-                    cached_vectors[i] = EMBEDDING_CACHE[text_hash]
-                    CACHE_HITS += 1
-                else:
-                    # 캐시 미스
-                    texts_to_embed.append(text)
-                    text_positions[len(texts_to_embed) - 1] = i
-                    CACHE_MISSES += 1
-            
-            # 캐시되지 않은 텍스트 임베딩
-            if texts_to_embed:
-                # 기본 임베딩 함수로 벡터 생성
-                embeddings = self.base_embedding_function(texts_to_embed)
-                
-                # L2 정규화 및 캐싱
-                for i, emb in enumerate(embeddings):
-                    # L2 정규화 적용
-                    norm = np.linalg.norm(emb)
-                    if norm > 0:
-                        normalized_emb = emb / norm
-                    else:
-                        normalized_emb = emb
-                    
-                    # 원래 인덱스와 텍스트 가져오기
-                    orig_index = text_positions[i]
-                    text = input[orig_index]
-                    text_hash = _hash_text(text)
-                    
-                    # 캐시 크기 제한 확인
-                    if len(EMBEDDING_CACHE) >= MAX_CACHE_SIZE:
-                        # 캐시 1/4 비우기
-                        keys_to_remove = list(EMBEDDING_CACHE.keys())[:MAX_CACHE_SIZE // 4]
-                        for key in keys_to_remove:
-                            EMBEDDING_CACHE.pop(key, None)
-                    
-                    # 캐싱 및 결과 저장
-                    EMBEDDING_CACHE[text_hash] = normalized_emb
-                    cached_vectors[orig_index] = normalized_emb
-            
-            # 원래 순서대로 결과 반환
-            return [cached_vectors[i] for i in range(len(input))]
-        else:
-            # 캐싱 없이 임베딩 생성 및 정규화
-            embeddings = self.base_embedding_function(input)
-            
-            # L2 정규화 적용
-            normalized_embeddings = []
-            for emb in embeddings:
-                # L2 노름(벡터 크기) 계산
-                norm = np.linalg.norm(emb)
-                # 0으로 나누기 방지
-                if norm > 0:
-                    normalized_emb = emb / norm
-                else:
-                    normalized_emb = emb
-                normalized_embeddings.append(normalized_emb)
-                
-            return normalized_embeddings
-
-    def name(self):
-        """
-        래핑된 기본 임베딩 함수의 이름을 반환합니다.
-        ChromaDB의 내부 검증을 위해 필요합니다.
-        """
-        # 래핑된 기본 임베딩 함수가 name 속성을 가지고 있는지 확인
-        if hasattr(self.base_embedding_function, 'name'):
-            return self.base_embedding_function.name()
-        # 기본 함수가 name 속성이 없는 경우 (드물지만 안전 장치)
-        return "L2NormalizedEmbeddingFunction" # 또는 적절한 기본 이름
-
-def get_normalized_embedding_function(embedding_model_request="all-MiniLM-L6-v2", use_cache=True, device_preference="cpu"): # 기본값을 "cpu"로 변경
-    """
-    L2 정규화가 적용된 임베딩 함수를 생성합니다.
-    
-    Args:
-        embedding_model_request (str): 사용자가 요청한 임베딩 모델 이름
-        use_cache (bool): 캐시 사용 여부
-        device_preference (str): 사용할 장치 ("auto", "cuda", "cpu")
-        
-    Returns:
-        L2NormalizedEmbeddingFunction: L2 정규화된 임베딩 함수
-    """
-    # 기본 임베딩 함수 생성
-    base_function = get_embedding_function(embedding_model_request, use_cache=False, device_preference=device_preference)
-    
-    # L2 정규화 래퍼 적용
-    return L2NormalizedEmbeddingFunction(base_function, use_cache=use_cache)
-
 def get_available_embedding_models():
     """
     사용 가능한 임베딩 모델 목록을 반환합니다.
@@ -506,3 +355,72 @@ def get_available_embedding_models():
             "all-MiniLM-L12-v2"  # 영어 특화 모델
         ]
     }
+
+class NormalizedEmbeddingFunction:
+    """
+    ChromaDB 호환 L2 정규화 임베딩 함수 클래스
+    ChromaDB의 EmbeddingFunction 인터페이스를 준수합니다.
+    """
+    
+    def __init__(self, base_embedding_function):
+        """
+        L2 정규화 임베딩 함수를 초기화합니다.
+        
+        Args:
+            base_embedding_function: 기본 임베딩 함수
+        """
+        self.base_embedding_function = base_embedding_function
+    
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        """
+        ChromaDB 호환 임베딩 함수 인터페이스
+        
+        Args:
+            input: 임베딩할 텍스트 목록
+            
+        Returns:
+            List[List[float]]: L2 정규화된 임베딩 벡터 목록
+        """
+        # 기본 임베딩 함수로 임베딩 생성
+        embeddings = self.base_embedding_function(input)
+        
+        # L2 정규화 적용
+        import numpy as np
+        normalized_embeddings = []
+        for embedding in embeddings:
+            # numpy 배열로 변환
+            embedding_array = np.array(embedding, dtype=float)
+            
+            # L2 norm 계산
+            l2_norm = np.linalg.norm(embedding_array)
+            
+            # 0으로 나누기 방지
+            if l2_norm > 0:
+                normalized_embedding = embedding_array / l2_norm
+            else:
+                normalized_embedding = embedding_array
+            
+            normalized_embeddings.append(normalized_embedding.tolist())
+        
+        return normalized_embeddings
+
+def get_normalized_embedding_function(embedding_model_request="all-MiniLM-L6-v2", device_preference="auto"):
+    """
+    L2 정규화가 적용된 ChromaDB 호환 임베딩 함수를 생성합니다.
+    
+    Args:
+        embedding_model_request (str): 사용자가 요청한 임베딩 모델 이름
+        device_preference (str): 사용할 장치 ("auto", "cuda", "cpu")
+        
+    Returns:
+        NormalizedEmbeddingFunction: ChromaDB 호환 L2 정규화 임베딩 함수
+    """
+    # 기본 임베딩 함수 가져오기
+    base_embedding_function = get_embedding_function(
+        embedding_model_request=embedding_model_request,
+        use_cache=True,
+        device_preference=device_preference
+    )
+    
+    # ChromaDB 호환 정규화 임베딩 함수 클래스로 래핑
+    return NormalizedEmbeddingFunction(base_embedding_function)

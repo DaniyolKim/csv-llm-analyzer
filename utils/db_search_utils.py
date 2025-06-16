@@ -1,9 +1,10 @@
-import numpy as np
-import streamlit as st
+"""
+데이터베이스 검색 관련 유틸리티 함수 모음
+"""
 import pandas as pd
-from text_utils import KOREAN_STOPWORDS, clean_text
+import streamlit as st
+from .text_utils import KOREAN_STOPWORDS, clean_text
 
-# 데이터 로딩 및 표시 함수
 def load_collection_data(collection):
     """컬렉션에서 모든 데이터를 로드하여 DataFrame으로 반환"""
     try:
@@ -61,7 +62,7 @@ def display_collection_data(result_df):
 # 검색 함수
 def search_collection(collection, query, n_results=10):
     """컬렉션에서 쿼리에 가장 관련 있는 문서를 검색"""
-    from chroma_utils import hybrid_query_chroma  # 함수 내에서 import하여 circular import 방지
+    from .chroma_utils import hybrid_query_chroma  # 함수 내에서 import하여 circular import 방지
     
     results = hybrid_query_chroma(collection, query, n_results=n_results)
     
@@ -180,7 +181,7 @@ def display_search_results(result_df):
 
 # 시각화 유틸리티 함수 - 이제 visualization_utils.py 모듈로 이전됨
 # 다른 파일에서 import할 수 있도록 visualization_utils 모듈 함수를 재내보냄
-from visualization_utils import (
+from .visualization_utils import (
     get_embeddings_data,
     handle_missing_embeddings, 
     prepare_visualization_data,
@@ -324,7 +325,8 @@ def search_collection_by_similarity_full(collection, query, similarity_threshold
     try:
         import streamlit as st
         import pandas as pd
-        from embedding_utils import get_embedding_function
+        import numpy as np
+        from .embedding_utils import get_embedding_function
         
         with st.spinner("전체 문서 데이터를 로드하는 중..."):
             # 컬렉션의 전체 문서 가져오기

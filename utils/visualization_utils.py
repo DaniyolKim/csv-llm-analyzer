@@ -11,7 +11,7 @@ from wordcloud import WordCloud
 from konlpy.tag import Okt
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-from text_utils import KOREAN_STOPWORDS, clean_text
+from .text_utils import KOREAN_STOPWORDS, clean_text
 
 # LDA 모델링을 위한 추가 라이브러리 - 선택적 임포트
 LDA_AVAILABLE = False
@@ -308,7 +308,7 @@ def display_cluster_documents(viz_data, n_clusters):
 
 def generate_wordcloud_for_cluster(texts, stopwords, max_words_wc=100):
     """클러스터의 텍스트에서 워드클라우드 생성"""
-    from text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
+    from .text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
     
     okt = Okt()
     nouns = []
@@ -412,7 +412,7 @@ def display_cluster_wordclouds(viz_data, n_clusters, stopwords, max_words_wc=100
 # LDA 관련 함수
 def preprocess_text_for_lda(texts, stopwords):
     """LDA 모델링을 위한 텍스트 전처리"""
-    from text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
+    from .text_utils import IMPORTANT_SINGLE_CHAR_NOUNS  # 중요 한 글자 명사 목록 가져오기
     okt = Okt()
     processed_texts = []
     

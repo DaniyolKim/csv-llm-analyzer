@@ -1,9 +1,12 @@
+"""
+Ollama 통합 및 RAG (Retrieval-Augmented Generation) 기능
+"""
 import os
 import argparse
 import chromadb
 import ollama
-from chroma_utils import load_chroma_collection
-from utils import clean_text
+from .chroma_utils import load_chroma_collection
+from .text_utils import clean_text
 
 def get_ollama_models():
     """

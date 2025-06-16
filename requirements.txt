@@ -4,13 +4,9 @@ numpy
 chromadb
 requests
 ollama
-kss
 sentence-transformers
 plotly
 scikit-learn
 wordcloud
-konlpy
 matplotlib
-gensim
-pyLDAvis
-networkx
+torch

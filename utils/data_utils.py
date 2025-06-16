@@ -2,7 +2,7 @@
 데이터프레임 처리 관련 유틸리티 함수 모음
 """
 import pandas as pd
-from text_utils import clean_text
+from .text_utils import clean_text
 
 def preprocess_dataframe(df, selected_columns, max_rows=None):
     """
